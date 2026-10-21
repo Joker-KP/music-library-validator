@@ -1,0 +1,15 @@
+services:
+  music-validator:
+    build: .
+    image: music-library-validator:local
+    environment:
+      TZ: Europe/Warsaw
+    volumes:
+      # Change this to your actual music directory.
+      - /volume1/music:/music:ro
+      - ./config:/config:ro
+      - ./data:/data
+      - ./reports:/reports
+    restart: "no"
+    user: "${PUID:-1000}:${PGID:-1000}"
+    command: ["scan", "--config", "/config/rules.yaml", "--db", "/data/library.sqlite", "--reports", "/reports"]
