@@ -4,6 +4,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+from .characters import DEFAULT_ALLOWED_CHARS, allowed_characters
+
 
 def issue(row, rule, message, severity="warning"):
     return {
@@ -40,6 +42,8 @@ def validate(rows, config):
         if ac.get("required") and not artwork:
             issues.append(issue(row, "missing_artwork", "No embedded cover art"))
         for pic in artwork:
+            if pic.get("dimension_error") and (ac.get("min_width") or ac.get("min_height")):
+                issues.append(issue(row, "artwork_dimensions_unavailable", pic["dimension_error"]))
             for dimension, minimum in [
                 ("width", ac.get("min_width")),
                 ("height", ac.get("min_height")),
@@ -52,6 +56,18 @@ def validate(rows, config):
                     )
         filename = Path(row["path"]).stem
         fc = config.get("filename", {})
+        allowed = allowed_characters(fc.get("allowed_chars", DEFAULT_ALLOWED_CHARS))
+        if allowed is not None:
+            forbidden = sorted(set(filename) - allowed)
+            if forbidden:
+                details = ", ".join(f"{char!r} (U+{ord(char):04X})" for char in forbidden)
+                issues.append(
+                    issue(
+                        row,
+                        "filename_allowed_chars",
+                        f"Filename stem contains disallowed characters: {details}",
+                    )
+                )
         if fc.get("regex") and not re.fullmatch(fc["regex"], filename):
             issues.append(
                 issue(row, "filename_pattern", f"Filename does not match regex: {filename}")

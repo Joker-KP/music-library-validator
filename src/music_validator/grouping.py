@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-DEFAULT_DISC_PATTERN = r"^(?:cd|disc|disk)[ _.-]*0*[1-9][0-9]*$"
+DEFAULT_DISC_PATTERN = r"^(?:.*[ _.-])?(?:cd|disc|disk)[ _.-]*0*(?P<disc>[1-9][0-9]*)$"
 
 
 def _disc(name, pattern):

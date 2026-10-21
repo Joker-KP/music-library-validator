@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased — scanner and cache hardening
+## Unreleased
+
+- Fix false FLAC `small_artwork` issues when PICTURE width/height fields are zero
+  or stale: read actual embedded image-header dimensions using Pillow. Keep
+  real undersized-cover checks and report unavailable dimensions explicitly.
+- Add Pillow as a runtime dependency and bump parser version to 2 so existing
+  caches refresh once automatically, without deleting metadata or editing music.
+
+- **Default grouping change:** recognize disc suffixes such as `Some Album Name - CD2`
+  and `1999 - Album_CD 02`, with a named disc capture and a required prefix
+  separator. Existing explicit YAML patterns still override the new default.
+- **New default filename rule:** `filename.allowed_chars: '[]0-9a-zA-Z -()'`
+  permits only ASCII letters/digits, spaces, hyphens, square brackets and
+  parentheses in the stem. Empty string or null permits all characters. Literal
+  Unicode characters can be added; ASCII letter/digit ranges expand. Violations
+  produce `filename_allowed_chars` issues. Other filename sub-rules remain independent.
+- Both settings re-evaluate cached tracks without rereading audio or migrating SQLite.
 
 - Reject writable outputs inside the music library, output symlinks, unsafe
   SQLite sidecars and multiply linked cache files. Preserve `/music:ro`.

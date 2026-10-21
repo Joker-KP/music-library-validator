@@ -7,6 +7,7 @@ from string import Formatter
 
 import yaml
 
+from .characters import DEFAULT_ALLOWED_CHARS, allowed_characters
 from .grouping import DEFAULT_DISC_PATTERN
 
 DEFAULTS = {
@@ -14,7 +15,11 @@ DEFAULTS = {
     "disc_folder_pattern": DEFAULT_DISC_PATTERN,
     "required_tags": ["title", "artist", "album", "tracknumber", "comment"],
     "artwork": {"required": True, "min_width": 500, "min_height": 500},
-    "filename": {"regex": r"^\d{2} - .+$", "match_template": None},
+    "filename": {
+        "regex": r"^\d{2} - .+$",
+        "match_template": None,
+        "allowed_chars": DEFAULT_ALLOWED_CHARS,
+    },
     "custom_rules": [],
     "album_rules": {
         "consistent_album": True,
@@ -123,6 +128,7 @@ def load_config(path: Path) -> dict:
             raise ValueError(f"album_rules.{key} must be a boolean")
     fc = config["filename"]
     _regex(fc["regex"], "filename.regex", nullable=True)
+    allowed_characters(fc["allowed_chars"])
     if fc["match_template"] is not None:
         check_template(fc["match_template"], "filename.match_template", filename=True)
     if not isinstance(config["custom_rules"], list):

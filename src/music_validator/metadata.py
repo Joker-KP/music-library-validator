@@ -1,10 +1,13 @@
 """Mutagen-based normalization for ID3 MP3 and Vorbis-comment FLAC."""
 
 import hashlib
+import warnings
+from io import BytesIO
 from pathlib import Path
 
 from mutagen.flac import FLAC
 from mutagen.id3 import ID3, ID3NoHeaderError
+from PIL import Image
 
 
 def _first(value):
@@ -13,6 +16,30 @@ def _first(value):
     if isinstance(value, list):
         return str(value[0]) if value else ""
     return str(value)
+
+
+def _flac_artwork(data):
+    # FLAC PICTURE dimensions may be zero or stale. Read the encoded image
+    # header itself, without loading pixels or modifying the PICTURE block.
+    artwork = {"width": None, "height": None, "sha256": hashlib.sha256(data).hexdigest()}
+    try:
+        with warnings.catch_warnings(), BytesIO(data) as source:
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(source) as image:
+                width, height = image.size
+                if width <= 0 or height <= 0:
+                    raise ValueError("Image dimensions must be positive")
+                artwork.update(width=width, height=height)
+    except (
+        OSError,
+        ValueError,
+        SyntaxError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as exc:
+        # Do not include BytesIO reprs: their memory addresses are nondeterministic.
+        artwork["dimension_error"] = f"Cannot read embedded image dimensions ({type(exc).__name__})"
+    return artwork
 
 
 def read_metadata(path: Path, fileobj=None) -> dict:
@@ -25,13 +52,7 @@ def read_metadata(path: Path, fileobj=None) -> dict:
         for key, value in audio.tags.items() if audio.tags else []:
             tags[key.lower()] = _first(value)
         for pic in audio.pictures:
-            art.append(
-                {
-                    "width": pic.width,
-                    "height": pic.height,
-                    "sha256": hashlib.sha256(pic.data).hexdigest(),
-                }
-            )
+            art.append(_flac_artwork(pic.data))
     elif suffix == ".mp3":
         try:
             audio = ID3(source)

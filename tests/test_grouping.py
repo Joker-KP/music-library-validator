@@ -14,6 +14,32 @@ def test_multiple_disc_patterns():
         assert disc_number(f, ROOT) == number
 
 
+@pytest.mark.parametrize(
+    "folder,number",
+    [
+        ("Some Album Name - CD2", 2),
+        ("1999 - Album - CD 02", 2),
+        ("Album_cd001", 1),
+        ("Album.Disc-3", 3),
+        ("艺术家 - Żółć - DISK_04", 4),
+        ("Album-CD2", 2),
+    ],
+)
+def test_disc_suffix_groups_with_album(folder, number):
+    track = ROOT / "Artist" / "Album" / folder / "01.flac"
+    assert album_directory(track, ROOT) == ROOT / "Artist" / "Album"
+    assert disc_number(track, ROOT) == number
+
+
+@pytest.mark.parametrize(
+    "folder", ["ACDC2", "AlbumCD2", "CD0", "Album - CD00", "Album - CD2 Bonus"]
+)
+def test_non_disc_suffix_is_not_collapsed(folder):
+    track = ROOT / "Album" / folder / "01.mp3"
+    assert album_directory(track, ROOT) == track.parent
+    assert disc_number(track, ROOT) is None
+
+
 def test_regular_album_directory():
     f = ROOT / "Artist" / "Album" / "01 - Song.mp3"
     assert album_directory(f, ROOT) == f.parent

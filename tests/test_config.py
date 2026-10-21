@@ -12,6 +12,10 @@ from music_validator.config import load_config
         [],
         {"library_root": "/x", "artwork": None},
         {"library_root": "/x", "filename": {"regex": "("}},
+        {"library_root": "/x", "filename": {"allowed_chars": []}},
+        {"library_root": "/x", "filename": {"allowed_chars": True}},
+        {"library_root": "/x", "filename": {"allowed_chars": "z-a"}},
+        {"library_root": "/x", "filename": {"allowed_chars": "x" * 4097}},
         {"library_root": "/x", "extensions": [".wav"]},
         {"library_root": "/x", "album_rules": {"unique_disc_track": "yes"}},
         {"library_root": "/x", "artwork": {"min_width": -1}},
@@ -68,9 +72,17 @@ def test_defaults_and_explicit_disabling(tmp_path):
     config = load_config(path)
     assert config["required_tags"] == ["title", "artist", "album", "tracknumber", "comment"]
     assert config["artwork"]["required"] is True
+    assert config["filename"]["allowed_chars"] == "[]0-9a-zA-Z -()"
     path.write_text("library_root: /x\nrequired_tags: []\nartwork: {required: false}\n")
     assert load_config(path)["required_tags"] == []
     assert load_config(path)["artwork"]["required"] is False
+
+
+@pytest.mark.parametrize("value", ["", None, "[]0-9a-zA-Z -()", "a-f []-", "a-ząćęłńóśźż"])
+def test_allowed_characters_config(tmp_path, value):
+    path = tmp_path / "rules.yaml"
+    path.write_text(yaml.safe_dump({"library_root": "/x", "filename": {"allowed_chars": value}}))
+    assert load_config(path)["filename"]["allowed_chars"] == value
 
 
 def test_duplicate_yaml_keys_rejected(tmp_path):

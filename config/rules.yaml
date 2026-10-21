@@ -2,12 +2,12 @@
 library_root: /music
 extensions: [.mp3, .flac]
 # Albums are grouped by directory; recognized disc folders map to their parent.
-# Examples: CD1, CD 02, Disc 1, Disk-2, Disc_03 (case-insensitive).
+# Examples: CD1, CD 02, Disc 1, Disk-2, Album - CD2 (case-insensitive).
 # For names with totals, capture the disc: '^CD (?P<disc>\d+) of \d+$'.
 # Matched names without a capture must contain exactly one positive number.
-disc_folder_pattern: '^(?:cd|disc|disk)[ _.-]*0*[1-9][0-9]*$'
+disc_folder_pattern: '^(?:.*[ _.-])?(?:cd|disc|disk)[ _.-]*0*(?P<disc>[1-9][0-9]*)$'
 
-required_tags: [title, artist, album, tracknumber, comment]
+required_tags: [title, artist, album, tracknumber, albumartist]
 
 artwork:
   required: true
@@ -16,6 +16,9 @@ artwork:
   # No max file size imposed in baseline.
 
 filename:
+  # Characters allowed in the stem (without .mp3/.flac); '' or null allows all.
+  # ASCII letter/digit ranges expand; brackets, parentheses and other punctuation are literal.
+  allowed_chars: '[]0-9a-zA-Z -.()'
   # Uses an explicit two-digit track prefix; applies to file stem (no extension).
   regex: '^\d{2} - .+$'
   # Optional comparison against metadata; enable after tuning conventions.

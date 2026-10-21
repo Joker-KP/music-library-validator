@@ -7,7 +7,7 @@ name = "music-library-validator"
 version = "0.1.0"
 description = "Read-only MP3/FLAC metadata and album convention auditor"
 requires-python = ">=3.11"
-dependencies = ["mutagen>=1.47,<2", "PyYAML>=6,<7"]
+dependencies = ["mutagen>=1.47,<2", "PyYAML>=6,<7", "Pillow>=10,<13"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.8"]

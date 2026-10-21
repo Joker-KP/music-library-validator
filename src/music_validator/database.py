@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 
 SCHEMA_VERSION = 1
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 
 
 def connect(path: Path):

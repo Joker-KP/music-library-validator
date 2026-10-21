@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -12,6 +13,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 from conftest import signatures
+from mutagen.flac import Picture
+from PIL import Image
 
 from music_validator import cli, database, scanner
 
@@ -232,3 +235,86 @@ def test_publication_failure_keeps_prior_reports_and_recovers_from_cache(tmp_pat
     with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
         run_scan(tmp_path, config_file)
     assert (tmp_path / "reports/current").readlink() != current
+
+
+def test_disc_suffix_and_character_rule_revalidate_cached_metadata(tmp_path, library, config_file):
+    # Construct suffix-named directories from fixtures before scanning.
+    for disc, ext in [(1, "mp3"), (2, "flac")]:
+        directory = library / "Artist" / "Album 1999" / f"Album 1999 - CD{disc}"
+        directory.mkdir(parents=True)
+        shutil.copyfile(next(library.rglob(f"*.{ext}")), directory / f"01 - Song_[Live].{ext}")
+    before = signatures(library)
+    config = yaml.safe_load(config_file.read_text())
+    config["disc_folder_pattern"] = r"^(?:cd|disc|disk)[ _.-]*0*[1-9][0-9]*$"
+    config_file.write_text(yaml.safe_dump(config))
+    run_scan(tmp_path, config_file)
+    assert len({r[1] for r in records(tmp_path)}) == 3
+    assert sum(i["rule"] == "filename_allowed_chars" for i in report(tmp_path)["issues"]) == 4
+    del config["disc_folder_pattern"]
+    config["filename"] = {"allowed_chars": ""}
+    config_file.write_text(yaml.safe_dump(config))
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        run_scan(tmp_path, config_file)
+    assert len({r[1] for r in records(tmp_path)}) == 2
+    assert not any(
+        i["rule"] in ("duplicate_track", "filename_allowed_chars")
+        for i in report(tmp_path)["issues"]
+    )
+    assert signatures(library) == before
+    with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert list(csv.DictReader(stream)) == report(tmp_path)["issues"]
+
+
+def test_flac_zero_picture_dimensions_refresh_old_cache(tmp_path, library, config_file):
+    # Build a FLAC fixture with a real picture block, preserving the synthetic
+    # fixture's other metadata and audio bytes. No existing music file is edited.
+    path = library / "Artwork" / "01 - Song.flac"
+    path.parent.mkdir()
+    output = BytesIO()
+    Image.new("RGB", (800, 800)).save(output, format="JPEG")
+    picture = Picture()
+    picture.type = 3
+    picture.mime = "image/jpeg"
+    picture.data = output.getvalue()
+    assert picture.width == picture.height == 0
+    block = picture.write()
+    source = next(library.rglob("*.flac")).read_bytes()
+    assert source.startswith(b"fLaC")
+    # Preserve the required first STREAMINFO block, then add a non-final PICTURE.
+    assert source[4] == 0
+    first_end = 8 + int.from_bytes(source[5:8], "big")
+    path.write_bytes(
+        source[:first_end] + b"\x06" + len(block).to_bytes(3, "big") + block + source[first_end:]
+    )
+    before = signatures(library)
+    run_scan(tmp_path, config_file)
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        record = con.execute(
+            "SELECT metadata_json FROM tracks WHERE path=?", (str(path),)
+        ).fetchone()
+        old = json.loads(record[0])
+        old["artwork"][0].update(width=0, height=0)
+        con.execute(
+            "UPDATE tracks SET parser_version=1, metadata_json=? WHERE path=?",
+            (json.dumps(old), str(path)),
+        )
+    with patch.object(scanner, "read_metadata", wraps=scanner.read_metadata) as reader:
+        run_scan(tmp_path, config_file)
+    assert reader.call_count == 1
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        meta, version = con.execute(
+            "SELECT metadata_json,parser_version FROM tracks WHERE path=?", (str(path),)
+        ).fetchone()
+    assert version == database.PARSER_VERSION > 1
+    assert json.loads(meta)["artwork"][0]["width"] == 800
+    assert json.loads(meta)["artwork"][0]["height"] == 800
+    assert not any(
+        i["path"] == str(path)
+        and i["rule"] in ("small_artwork", "read_error", "artwork_dimensions_unavailable")
+        for i in report(tmp_path)["issues"]
+    )
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        run_scan(tmp_path, config_file)
+    assert signatures(library) == before
+    with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert list(csv.DictReader(stream)) == report(tmp_path)["issues"]

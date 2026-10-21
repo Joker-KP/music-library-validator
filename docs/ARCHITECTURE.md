@@ -7,7 +7,8 @@
 SQLite is a **cache of source-file metadata**, not the source of truth.
 `config.py`, `safety.py`, `scanner.py`, `metadata.py`, `database.py`, `validation.py`
 and `reports.py` separate configuration, output safety, discovery, normalization,
-persistence, rules and rendering. `cli.py` coordinates them.
+persistence, rules and rendering. `characters.py` shares the safe filename
+allowlist grammar between configuration validation and rules. `cli.py` coordinates them.
 
 Configuration changes revalidate all indexed metadata each run. Grouping is
 recomputed for cache hits; read failures are retried next run. Discovery sorts
@@ -33,8 +34,11 @@ scope before adoption. Root identity changes require a separate database.
 
 Filesystem directory is the album key. Starting from a track's parent directory,
 remove terminal disc-folder components matching the configured case-insensitive
-regex `^(?:cd|disc|disk)[ _.-]*0*[1-9][0-9]*$`. `Album/CD1/track` and
-`Album/CD2/track` share `Album`. Unrecognized nested folders remain separate
+regex `^(?:.*[ _.-])?(?:cd|disc|disk)[ _.-]*0*(?P<disc>[1-9][0-9]*)$`.
+`Album/CD1/track`, `Album/CD2/track` and `Album/Some Album Name - CD2/track`
+share `Album`. A prefix must end with a space, underscore, dot or hyphen before
+the disc marker. The named capture extracts only the final disc number, ignoring
+numbers in the prefix. Unrecognized nested folders remain separate
 albums. Detect disc number from the nearest matching ancestor, stopping at the
 library root. Custom patterns use a named numeric `(?P<disc>...)` capture, or
 exactly one digit sequence in the matched folder name. Ambiguous/missing/nonpositive
@@ -46,9 +50,27 @@ remain future work.
 
 MP3: ID3 frames `TIT2` title, `TPE1` artist, `TALB` album, `TPE2` albumartist, `TRCK` tracknumber, `TPOS` discnumber, `COMM` comment, `APIC` cover. FLAC: Vorbis Comments, with key alias normalization; FLAC Picture blocks for cover. The normalized model stores fields as strings, plus cover SHA-256/dimensions where available. Handling multiple values, exotic tags and language-specific comments requires extension.
 
+FLAC artwork dimensions come from the encoded image header read with Pillow,
+not the FLAC PICTURE block's declared width/height (which may be zero or stale).
+Only image headers are read; pixels are not loaded. Unreadable/unsupported headers
+or image-size safety-limit failures normalize dimensions to null and include a
+`dimension_error`; track tags and the hash of original picture bytes are retained.
+Minimum-dimension rules emit `artwork_dimensions_unavailable` for that picture.
+MP3 APIC dimension measurement remains deferred. Parser version 2 forces a
+one-time metadata refresh to replace old cached zero dimensions; schema remains 1.
+
 ## Validation execution
 
 Missing-tag, image presence/dimensions, filename regex and template rules run per track. Album consistency and duplicate disc/track run per album. Issues include album, path, rule ID, severity and text. Configured `album_rules` flags enable/disable checks. All rules are read-only.
+
+The independent `filename.allowed_chars` rule checks the stem against a literal
+allowlist with ASCII same-case letter/digit ranges. Punctuation is literal;
+configuration is never used as an arbitrary regular expression. Empty/null
+disables this rule. The default `[]0-9a-zA-Z -()` allows only brackets, ASCII
+digits/letters, a space, hyphen and parentheses. Each offending track gets one
+`filename_allowed_chars` issue listing unique disallowed characters in sorted
+order with Unicode code points. These rules and grouping run on cached metadata
+without a parser-version change or metadata reread.
 
 ## Operational model
 

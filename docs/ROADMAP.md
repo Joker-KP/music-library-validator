@@ -8,7 +8,11 @@
   migrations, parser-version invalidation, read retries and ownership locks.
 - Completed: output-path checks, descriptor-based read-only traversal, cached
   regrouping, disc extraction/mismatch diagnostics and atomic report generations.
-- Add MP3 cover dimensions with Pillow; handle artwork formats and invalid images.
+- Completed: disc-marker suffix grouping and configurable filename character
+  allowlists, with cached revalidation and Unicode opt-in.
+- Completed: FLAC image-header dimensions with Pillow, handling zero/stale PICTURE
+  fields and explicit unavailable-dimension diagnostics; parser-version cache refresh.
+- Extend image-header measurement to MP3 APIC; full image-integrity checks remain optional future work.
 - Confirm permissions, mount behavior, resource use and Unicode behavior on actual
   Synology hardware. Local fixture tests cover Unicode and injected permission errors.
 - Added a Linux CI matrix for Python 3.11, 3.12 and 3.14; benchmark large-library scans.

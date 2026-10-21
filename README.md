@@ -36,7 +36,7 @@ fail immediately with exit code 2.
 - Audit existing MP3 and FLAC files, never rename, rewrite tags, or alter music automatically.
 - Required fields include `title`, `artist`, `album`, `tracknumber`, `comment`; embedded art is mandatory by default. Configure rule choices in YAML.
 - Support cross-tag relationships (example: `comment == artist + ' - ' + album`) and title/filename conventions; custom equality templates work today.
-- Group albums by **directory**, not tags. Directories named `CD1`, `CD 02`, `Disc-3`, `Disk_04` are disc subfolders of their parent. An album with two discs is one report group, and track 1 on disc 1 and disc 2 are not duplicates.
+- Group albums by **directory**, not tags. Directories named `CD1`, `CD 02`, `Disc-3`, `Disk_04`, or ending with a separated disc marker such as `Some Album Name - CD2`, are disc subfolders of their parent. An album with two discs is one report group, and track 1 on disc 1 and disc 2 are not duplicates.
 - Report *albums needing attention*, with track-level explanations in expandable HTML sections and machine-readable CSV/JSON.
 - SQLite caches parsed metadata by path, size and nanosecond mtime. New/changed files are re-read; removed files are purged after a successful traversal. **All cached entries are revalidated against current YAML rules every run**, so rule edits do not require a metadata rescan.
 - Album grouping is recalculated even on metadata cache hits. Cached read errors are retried on the next scan. Complete scans persist summary counters in SQLite.
@@ -46,6 +46,26 @@ fail immediately with exit code 2.
 ## Examples
 
 Expected naming convention: `01 - Track title.mp3` or `01 - Track title.flac`. `filename.regex` checks the stem; `filename.match_template` can additionally compare it with metadata, for example `{tracknumber:02d} - {title}`. Avoid enabling this template until track number formats and character escaping are confirmed.
+
+`filename.allowed_chars` independently checks characters in the stem, excluding
+the extension. Its default is the exact allowlist below: ASCII letters, digits,
+spaces, hyphens, square brackets and parentheses. Ranges such as `a-z` expand;
+other characters are literal, so brackets do not need escaping. Append any
+additional Unicode letters/punctuation used by your collection, or set `''` (or
+null) to allow all characters. Other filename checks still apply.
+
+```yaml
+filename:
+  allowed_chars: '[]0-9a-zA-Z -()'
+  # For unrestricted characters instead: allowed_chars: ''
+```
+
+For disc folders, the default pattern recognizes a final `CD`, `Disc` or `Disk`
+marker with a positive number. A prefix must be separated by a space, underscore,
+dot or hyphen: `Album - CD2` and `Album_CD 02` work; `AlbumCD2` does not. Numbers
+in the prefix, such as `1999 - Album - CD2`, do not affect disc-number extraction.
+An explicit `disc_folder_pattern` overrides this default; update existing YAML
+patterns to the example in `config/rules.yaml` to enable suffix recognition.
 
 Example custom rule (replace `custom_rules: []`):
 
@@ -63,14 +83,15 @@ Examples of grouping:
 /music/Artist/Album/01 - Intro.flac          -> /music/Artist/Album
 /music/Artist/Album/CD1/01 - Intro.flac      -> /music/Artist/Album
 /music/Artist/Album/CD2/01 - Outro.flac      -> /music/Artist/Album
+/music/Artist/Album/Album - CD2/01.flac     -> /music/Artist/Album
 /music/Artist/Album/Bonus/01 - Demo.mp3      -> /music/Artist/Album/Bonus (separate)
 ```
 
 ## Implementation status
 
-Implemented: recursive file enumeration, ID3 and FLAC Vorbis Comment normalization via Mutagen, MP3 APIC / FLAC Picture detection, album directory grouping, disc-folder fallback, missing field / cover / filename regex checks, optional filename template and custom equality rules, album/title and albumartist consistency options, duplicate `(disc, track)` detection, optional cover-hash consistency, SQLite incremental cache, read errors and three report formats.
+Implemented: recursive file enumeration, ID3 and FLAC Vorbis Comment normalization via Mutagen, MP3 APIC / FLAC Picture detection, album directory grouping with disc suffixes, disc-folder fallback, missing field / cover / filename regex and allowed-character checks, optional filename template and custom equality rules, album/title and albumartist consistency options, duplicate `(disc, track)` detection, optional cover-hash consistency, SQLite incremental cache, read errors and three report formats.
 
-Not implemented yet: MP3 cover image dimensions (APIC doesn't directly expose them; add Pillow); FLAC stream integrity check (`flac -t`); hashing music/audio data; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; a persistent web UI; reproducible locked dependencies; structured logging and performance benchmarks.
+Not implemented yet: MP3 cover image dimension measurement; FLAC stream integrity check (`flac -t`); hashing music/audio data; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; a persistent web UI; reproducible locked dependencies; structured logging and performance benchmarks.
 
 ## Verification
 
@@ -90,6 +111,7 @@ Source content hashes, sizes and modification times are checked across scans.
 - Metadata parsing/read failures appear as `read_error`; absent ID3 headers produce missing-tag issues. Neither proves audio stream integrity; full decoding is a future option.
 - Multiple MP3 comments: baseline chooses first COMM frame; language and description selection need a policy. FLAC tags may be multi-valued: baseline chooses first value.
 - MP3 cover dimensions are not currently measured; minimum dimension rule only applies where dimensions are available (FLAC).
+- FLAC dimensions are read from the embedded image header with Pillow, rather than the potentially zero or stale width and height declared in the PICTURE block. Valid 600×600 or 800×800 artwork with declared zero dimensions is measured correctly. Image headers that cannot be read safely yield `artwork_dimensions_unavailable` when minimum dimensions are enabled, rather than a misleading `small_artwork` issue. Pixel data is not fully decoded; this is not an image-integrity test.
 - Duplicate track detection uses `DISCNUMBER` when present and disc-folder number otherwise. Disagreements produce `disc_number_mismatch` by default; the tag remains authoritative.
 - Album root `library_root` holding tracks directly will group those tracks together. Non-disc nested folders are considered distinct albums.
 - Current HTML output includes local paths. Do not publicly serve reports without evaluating privacy exposure.
@@ -107,6 +129,12 @@ metadata refresh on the first successful upgraded scan. Future parser-version
 changes also trigger metadata refresh; ordinary YAML edits do not. Back up an
 existing database before upgrading; an older binary must not reuse the migrated
 database. Unsupported future schema versions are refused.
+
+Parser version 2 refreshes existing cached metadata once to correct FLAC artwork
+dimensions. No database deletion or `--full-scan` is necessary; later unchanged
+scans use the cache normally. Install updated dependencies with
+`pip install -e '.[dev]'`, or rebuild the Docker image, before running the upgraded
+scanner; Pillow is now a runtime dependency.
 
 A cache is bound to the resolved library path, root device/inode and normalized
 extension set. Scope changes are refused without deleting records. Use a separate
