@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Add `catalog.html`, `catalog.csv` and `catalog.json` for every detected album,
+  including clean albums: album artist, year, album, worst-track quality,
+  recursive folder size in decimal MB and track count. Publish catalogs and
+  issue reports together in one atomic six-file generation. Count sidecars
+  without following symlinks and refresh sizes on metadata-cache hits.
+- Cache MP3 stream bitrate under parser version 4, triggering one automatic
+  metadata refresh of older entries without changing SQLite schema or audio.
+- Fix false `missing_year` issues for MP3 `TDRC`/`TYER` and FLAC `DATE`: derive
+  normalized `year` while preserving the complete date. Prefer an explicit
+  FLAC `YEAR`, also using it as a missing-date fallback. Apply the same
+  derivation to existing cached metadata without audio rereads or schema changes.
+- Add custom-rule `when` selectors for format, compilation, field presence and
+  literal substring matching; combined selectors use AND logic.
+- Add `template.operator` and `template.pattern` (`equals`, `regex` fullmatch,
+  `contains` rendered substring). **Breaking configuration change:** remove
+  `equals_template` and reject the old `equal` spelling; use a structured
+  template with `operator: equals`. Examples list operator before pattern.
+  Validate the declarative schema and regex syntax before writes; interpolate
+  metadata as literal text in regexes. Add a lyricist/comment-credit example.
+- Normalize MP3 `TEXT`/`TOLY`/`TCMP` and FLAC original-lyricist aliases; parser
+  version 3 refreshes old metadata once. Later YAML-only rule changes reuse cache.
+
 - Fix false FLAC `small_artwork` issues when PICTURE width/height fields are zero
   or stale: read actual embedded image-header dimensions using Pillow. Keep
   real undersized-cover checks and report unavailable dimensions explicitly.

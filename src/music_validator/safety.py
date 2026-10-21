@@ -6,7 +6,7 @@ import stat
 from contextlib import contextmanager
 from pathlib import Path
 
-REPORT_FILES = ("index.html", "issues.csv", "report.json")
+REPORT_FILES = ("index.html", "issues.csv", "report.json", "catalog.html", "catalog.csv", "catalog.json")
 
 
 def plain_path(path: Path):

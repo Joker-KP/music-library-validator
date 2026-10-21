@@ -8,14 +8,26 @@ SQLite is a **cache of source-file metadata**, not the source of truth.
 `config.py`, `safety.py`, `scanner.py`, `metadata.py`, `database.py`, `validation.py`
 and `reports.py` separate configuration, output safety, discovery, normalization,
 persistence, rules and rendering. `characters.py` shares the safe filename
-allowlist grammar between configuration validation and rules. `cli.py` coordinates them.
+allowlist grammar between configuration validation and rules. `custom_rules.py`
+evaluates declarative conditions and template comparisons on normalized metadata.
+`catalog.py` summarizes each album independently of its validation issues.
+`cli.py` coordinates them.
 
-Configuration changes revalidate all indexed metadata each run. Grouping is
+Configuration changes revalidate all indexed metadata each run. Derived date/year
+normalization runs both during parsing and on cached tags before validation:
+preserve complete dates, derive a missing year from a leading four-digit date,
+and use an explicit year as a missing-date fallback. This needs no schema or
+parser-version change because existing cached date/year strings are sufficient.
+Grouping is
 recomputed for cache hits; read failures are retried next run. Discovery sorts
 one directory at a time, uses no library-wide path/seen set, and opens descendants
 relative to read-only directory descriptors with `O_NOFOLLOW`. Traversal errors
-propagate. Validation loads one album at a time; issue lists and rendered reports
-still scale with issue count. This is not a full audio decoder/integrity check.
+propagate. Discovery also totals recursive regular-file sizes in postorder,
+retaining only totals for detected album directories; links are excluded. This
+uses the same traversal, without rereading audio or opening sidecar contents.
+Validation and catalog aggregation load one album at a time; retained summaries
+scale with album count, and issue lists/reports scale with issue count. This is
+not a full audio decoder/integrity check.
 
 Schema 1 migrates the unversioned baseline without dropping metadata and adds
 `parser_version`, `last_seen_scan` and `cache_settings`. Legacy parser version zero
@@ -50,6 +62,19 @@ remain future work.
 
 MP3: ID3 frames `TIT2` title, `TPE1` artist, `TALB` album, `TPE2` albumartist, `TRCK` tracknumber, `TPOS` discnumber, `COMM` comment, `APIC` cover. FLAC: Vorbis Comments, with key alias normalization; FLAC Picture blocks for cover. The normalized model stores fields as strings, plus cover SHA-256/dimensions where available. Handling multiple values, exotic tags and language-specific comments requires extension.
 
+MP3 `TEXT`, `TOLY` and `TCMP` additionally map to `lyricist`, `origlyricist`,
+and `compilation`. FLAC retains those comment fields and aliases
+`originallyricist`/`original_lyricist` to `origlyricist` when not already set.
+Parser version 3 refreshes earlier caches to include these normalized fields;
+the SQLite schema remains 1. Compilation status is derived from normalized tag
+strings during validation, rather than inferred from albumartist or cached rules.
+
+Parser version 4 adds a top-level numeric `bitrate` (bits/s) from MP3 stream
+headers; unavailable MPEG headers leave it null while preserving ID3 tags.
+This reuses the scanner's read-only file descriptor, without full decoding.
+Older parser versions refresh once; schema 1 and existing metadata rows are
+retained. Bitrate is technical metadata, separate from normalized tag strings.
+
 FLAC artwork dimensions come from the encoded image header read with Pillow,
 not the FLAC PICTURE block's declared width/height (which may be zero or stale).
 Only image headers are read; pixels are not loaded. Unreadable/unsupported headers
@@ -57,7 +82,8 @@ or image-size safety-limit failures normalize dimensions to null and include a
 `dimension_error`; track tags and the hash of original picture bytes are retained.
 Minimum-dimension rules emit `artwork_dimensions_unavailable` for that picture.
 MP3 APIC dimension measurement remains deferred. Parser version 2 forces a
-one-time metadata refresh to replace old cached zero dimensions; schema remains 1.
+one-time metadata refresh to replace old cached zero dimensions; later parser
+versions include this correction as well.
 
 ## Validation execution
 
@@ -72,6 +98,15 @@ digits/letters, a space, hyphen and parentheses. Each offending track gets one
 order with Unicode code points. These rules and grouping run on cached metadata
 without a parser-version change or metadata reread.
 
+Custom rules evaluate `when` first (AND of format, compilation, presence and
+literal-substring selectors), then render `template.pattern` and compare with
+`equals`, literal `contains`, or regex `fullmatch`. Every custom rule requires
+a structured template; there is no legacy equality shorthand. Configuration restricts placeholders and validates
+regex syntax with stand-in values; regex interpolation escapes metadata as
+literal text. Evaluation errors become explicit issues. Configured pattern and
+rendered-regex lengths are bounded at 4096. No `eval`, `exec` or arbitrary
+expression language is used, and custom rules never access Mutagen objects.
+
 ## Operational model
 
 Short-lived Linux process invoked with Docker Compose. Mount `/music:ro`, writable
@@ -80,6 +115,15 @@ components, foreign report links, multiply linked database files and unsafe SQLi
 sidecars are rejected. Owned output directories must not be modified concurrently
 by other programs. Advisory locks on both the database and report directory reject
 overlapping scans; SQLite also takes `BEGIN IMMEDIATE` with no busy wait.
+
+Issue reports (`index.html`, `issues.csv`, `report.json`) and catalog reports
+(`catalog.html`, `catalog.csv`, `catalog.json`) are rendered from the same
+completed scan with the same timestamp. The catalog includes albums with no
+issues, aggregates conflicting tag values deterministically, ranks FLAC above
+MP3 and uses the minimum per-track MP3 bitrate. Unknown quality ranks below
+known quality. All six output paths share preflight, ownership and publication
+checks, including configuration-overwrite protection. HTML escapes tag values
+and album-directory tooltip attributes. See README for catalog field semantics.
 
 Report files are immutable generations published through one atomic `current`
 symlink replacement. Stable entry-point links retain the HTML/CSV/JSON interface.

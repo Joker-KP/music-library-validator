@@ -1,10 +1,13 @@
 import hashlib
 import os
 import shutil
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 import yaml
+from mutagen.flac import FLAC
+from mutagen.id3 import COMM, ID3, TCMP, TEXT, TOLY
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +31,41 @@ def config_file(tmp_path, library):
     path = tmp_path / "rules.yaml"
     path.write_text(yaml.safe_dump({"library_root": str(library)}), encoding="utf-8")
     return path
+
+
+@pytest.fixture
+def custom_rule_library(tmp_path):
+    """Create tagged synthetic files in memory, then write new fixtures only."""
+    root = tmp_path / "custom-music"
+    for ext in ("mp3", "flac"):
+        source = BytesIO((Path(__file__).parent / "fixtures" / f"silence.{ext}").read_bytes())
+        if ext == "mp3":
+            tags = ID3(source)
+            tags.add(TEXT(encoding=3, text=["Żaneta Nowak"]))
+            tags.add(TOLY(encoding=3, text=["Jan Łódzki"]))
+            tags.add(TCMP(encoding=3, text=["1"]))
+            tags.delall("COMM")
+            tags.add(
+                COMM(
+                    encoding=3,
+                    lang="pol",
+                    desc="",
+                    text=["muzyka: Anna; słowa: Żaneta Nowak; live"],
+                )
+            )
+            tags.save(source)
+        else:
+            audio = FLAC(source)
+            audio["lyricist"] = ["Żaneta Nowak"]
+            audio["originallyricist"] = ["Jan Łódzki"]
+            audio["compilation"] = ["0"]
+            audio["comment"] = ["muzyka: Anna"]
+            source.seek(0)
+            audio.save(source)
+        path = root / ext.upper() / f"01 - Song.{ext}"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(source.getvalue())
+    return root
 
 
 def signatures(root):

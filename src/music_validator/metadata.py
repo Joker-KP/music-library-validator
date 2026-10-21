@@ -1,12 +1,15 @@
 """Mutagen-based normalization for ID3 MP3 and Vorbis-comment FLAC."""
 
 import hashlib
+import re
 import warnings
 from io import BytesIO
 from pathlib import Path
 
+from mutagen import MutagenError
 from mutagen.flac import FLAC
 from mutagen.id3 import ID3, ID3NoHeaderError
+from mutagen.mp3 import MP3
 from PIL import Image
 
 
@@ -16,6 +19,19 @@ def _first(value):
     if isinstance(value, list):
         return str(value[0]) if value else ""
     return str(value)
+
+
+def normalize_date_tags(tags: dict[str, str]) -> None:
+    """Expose date/year consistently, including metadata from existing caches."""
+    year = tags.get("year", "").strip()
+    date = tags.get("date", "").strip()
+    if year:
+        if not date:
+            tags["date"] = tags["year"]
+    elif date:
+        match = re.match(r"^([0-9]{4})(?:$|[-/.Tt\s])", date)
+        if match:
+            tags["year"] = match[1]
 
 
 def _flac_artwork(data):
@@ -47,6 +63,7 @@ def read_metadata(path: Path, fileobj=None) -> dict:
     source = fileobj if fileobj is not None else path
     tags: dict[str, str] = {}
     art: list[dict] = []
+    bitrate = None
     if suffix == ".flac":
         audio = FLAC(source)
         for key, value in audio.tags.items() if audio.tags else []:
@@ -67,6 +84,9 @@ def read_metadata(path: Path, fileobj=None) -> dict:
             "TPOS": "discnumber",
             "TDRC": "date",
             "TYER": "date",
+            "TEXT": "lyricist",
+            "TOLY": "origlyricist",
+            "TCMP": "compilation",
         }
         for fid, dest in frames.items():
             f = audio.get(fid)
@@ -80,6 +100,14 @@ def read_metadata(path: Path, fileobj=None) -> dict:
             art.append(
                 {"width": None, "height": None, "sha256": hashlib.sha256(pic.data).hexdigest()}
             )
+        # Stream headers provide bitrate, not a full decoding/integrity check.
+        # Keep usable ID3 tags even for tag-only files or unreadable MPEG headers.
+        try:
+            if fileobj is not None:
+                fileobj.seek(0)
+            bitrate = MP3(source).info.bitrate
+        except (MutagenError, ValueError):
+            pass
     else:
         raise ValueError(f"Unsupported format: {suffix}")
     # FLAC sometimes names these with underscores or spaces.
@@ -90,8 +118,11 @@ def read_metadata(path: Path, fileobj=None) -> dict:
         "disc": "discnumber",
         "disc_number": "discnumber",
         "description": "comment",
+        "originallyricist": "origlyricist",
+        "original_lyricist": "origlyricist",
     }
     for old, new in aliases.items():
         if old in tags and new not in tags:
             tags[new] = tags[old]
-    return {"tags": tags, "artwork": art, "format": suffix.lstrip(".")}
+    normalize_date_tags(tags)
+    return {"tags": tags, "artwork": art, "format": suffix.lstrip("."), "bitrate": bitrate}

@@ -13,7 +13,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 from conftest import signatures
-from mutagen.flac import Picture
+from mutagen.flac import FLAC, Picture
+from mutagen.id3 import ID3, TDRC
 from PIL import Image
 
 from music_validator import cli, database, scanner
@@ -32,6 +33,103 @@ def records(tmp_path):
 
 def report(tmp_path):
     return json.loads((tmp_path / "reports/report.json").read_text())
+
+
+def test_catalog_includes_clean_albums_discs_sizes_and_cache(tmp_path, library, config_file):
+    config_file.write_text(yaml.safe_dump({
+        "library_root": str(library), "required_tags": [], "artwork": {"required": False},
+        "filename": {"regex": None, "allowed_chars": ""},
+        "album_rules": {"consistent_album": False, "unique_disc_track": False,
+                        "disc_number_mismatch": False},
+    }))
+    album = next(library.rglob("*.mp3")).parent.parent
+    attachment = album / "cover.jpg"
+    attachment.write_bytes(b"a" * 12345)
+    extras = album / "extras"
+    extras.mkdir()
+    (extras / "notes.txt").write_bytes(b"b" * 100)
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"c" * 1000)
+    (album / "linked.bin").symlink_to(outside)
+    before = signatures(library)
+    run_scan(tmp_path, config_file)
+    assert report(tmp_path)["issues"] == []
+    catalog = json.loads((tmp_path / "reports/catalog.json").read_text())
+    assert len(catalog["albums"]) == 1
+    row = catalog["albums"][0]
+    assert row["album_dir"] == str(album)
+    assert row["total_tracks"] == 2
+    assert row["quality"] == "MP3 64"
+    assert row["folder_size_mb"] == round(sum(v[1] for v in before.values()) / 1_000_000, 2)
+    assert signatures(library) == before
+    assert catalog["generated_at"] == report(tmp_path)["generated_at"]
+    with (tmp_path / "reports/catalog.csv").open(encoding="utf-8-sig", newline="") as stream:
+        csv_rows = list(csv.DictReader(stream))
+    assert csv_rows == [{key: str(value) for key, value in row.items() if key != "album_dir"}]
+    # Attachment changes update sizes even when no audio needs rereading.
+    attachment.write_bytes(b"a" * 2_000_000)
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        run_scan(tmp_path, config_file)
+    updated = json.loads((tmp_path / "reports/catalog.json").read_text())["albums"][0]
+    assert updated["folder_size_mb"] > row["folder_size_mb"]
+    assert updated["total_tracks"] == 2
+
+
+def test_catalog_read_errors_are_counted_and_marked_unknown(tmp_path, config_file):
+    with patch.object(scanner, "read_metadata", side_effect=PermissionError("unreadable")):
+        run_scan(tmp_path, config_file)
+    albums = json.loads((tmp_path / "reports/catalog.json").read_text())["albums"]
+    assert len(albums) == 1
+    assert albums[0]["total_tracks"] == 2
+    assert albums[0]["quality"] == "Unknown"
+    assert albums[0]["album_artist"] == albums[0]["year"] == "Unknown"
+
+
+def test_catalog_refreshes_old_metadata_once_for_bitrate(tmp_path, config_file):
+    run_scan(tmp_path, config_file)
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        for path, raw in con.execute("SELECT path,metadata_json FROM tracks").fetchall():
+            metadata = json.loads(raw)
+            metadata.pop("bitrate", None)
+            con.execute("UPDATE tracks SET parser_version=3,metadata_json=? WHERE path=?",
+                        (json.dumps(metadata), path))
+    with patch.object(scanner, "read_metadata", wraps=scanner.read_metadata) as reader:
+        run_scan(tmp_path, config_file)
+    assert reader.call_count == 2
+    assert database.PARSER_VERSION > 3
+    assert json.loads((tmp_path / "reports/catalog.json").read_text())["albums"][0]["quality"] == "MP3 64"
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        run_scan(tmp_path, config_file)
+
+
+def test_catalog_nested_album_sizes_and_track_counts(tmp_path, library, config_file):
+    original = next(library.rglob("*.flac"))
+    album = original.parent.parent
+    nested = album / "Bonus"
+    nested.mkdir()
+    shutil.copyfile(original, nested / "01 - Bonus.flac")
+    run_scan(tmp_path, config_file)
+    rows = json.loads((tmp_path / "reports/catalog.json").read_text())["albums"]
+    assert [row["album_dir"] for row in rows] == [str(album), str(nested)]
+    assert [row["total_tracks"] for row in rows] == [2, 1]
+    assert [row["quality"] for row in rows] == ["MP3 64", "FLAC"]
+    for row, directory in zip(rows, [album, nested]):
+        size = sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+        assert row["folder_size_mb"] == round(size / 1_000_000, 2)
+
+
+def test_empty_library_has_empty_catalog(tmp_path):
+    library = tmp_path / "empty"
+    library.mkdir()
+    config_file = tmp_path / "empty.yaml"
+    config_file.write_text(yaml.safe_dump({"library_root": str(library)}))
+    run_scan(tmp_path, config_file)
+    assert json.loads((tmp_path / "reports/catalog.json").read_text())["albums"] == []
+    assert "No albums found" in (tmp_path / "reports/catalog.html").read_text()
+    with (tmp_path / "reports/catalog.csv").open(encoding="utf-8-sig", newline="") as stream:
+        reader = csv.DictReader(stream)
+        assert len(reader.fieldnames) == 6
+        assert list(reader) == []
 
 
 def test_real_formats_cache_rules_grouping_full_and_read_only(
@@ -318,3 +416,97 @@ def test_flac_zero_picture_dimensions_refresh_old_cache(tmp_path, library, confi
     assert signatures(library) == before
     with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
         assert list(csv.DictReader(stream)) == report(tmp_path)["issues"]
+
+
+def test_conditional_rules_normalization_cache_and_reports(tmp_path, custom_rule_library):
+    config_file = tmp_path / "custom.yaml"
+    custom = {
+        "id": "comment_lyricist",
+        "field": "comment",
+        "when": {"field": "lyricist", "is_present": True},
+        "template": {"operator": "contains", "pattern": "słowa: {lyricist}"},
+    }
+    config = {"library_root": str(custom_rule_library), "custom_rules": [custom]}
+    config_file.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    before = signatures(custom_rule_library)
+    run_scan(tmp_path, config_file)
+    custom_issues = [i for i in report(tmp_path)["issues"] if i["rule"] == "comment_lyricist"]
+    assert len(custom_issues) == 1 and custom_issues[0]["path"].endswith(".flac")
+    # Simulate cached parser-2 metadata that omitted these MP3 fields.
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        for path, meta_json in con.execute("SELECT path,metadata_json FROM tracks").fetchall():
+            meta = json.loads(meta_json)
+            for key in ("lyricist", "origlyricist", "compilation"):
+                meta["tags"].pop(key, None)
+            con.execute(
+                "UPDATE tracks SET metadata_json=?,parser_version=2 WHERE path=?",
+                (json.dumps(meta), path),
+            )
+    with patch.object(scanner, "read_metadata", wraps=scanner.read_metadata) as reader:
+        run_scan(tmp_path, config_file)
+    assert reader.call_count == 2
+    for record in records(tmp_path):
+        tags = json.loads(record[2])["tags"]
+        assert tags["lyricist"] == "Żaneta Nowak" and tags["origlyricist"] == "Jan Łódzki"
+    custom["template"]["pattern"] = "słowa: {origlyricist}"
+    config_file.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        run_scan(tmp_path, config_file)
+    assert sum(i["rule"] == "comment_lyricist" for i in report(tmp_path)["issues"]) == 2
+    custom["when"] = {"format": "mp3", "is_compilation": True, "field": "title", "contains": "Łódź"}
+    custom["template"] = {"operator": "regex", "pattern": r"muzyka: Anna; słowa: {lyricist}; live"}
+    config_file.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        run_scan(tmp_path, config_file)
+    assert not any(i["rule"] == "comment_lyricist" for i in report(tmp_path)["issues"])
+    custom["field"] = "lyricist"
+    custom["template"] = {"operator": "equals", "pattern": "{lyricist}"}
+    config_file.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        run_scan(tmp_path, config_file)
+    assert not any(i["rule"] == "comment_lyricist" for i in report(tmp_path)["issues"])
+    assert signatures(custom_rule_library) == before
+    with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert list(csv.DictReader(stream)) == report(tmp_path)["issues"]
+    html = (tmp_path / "reports/index.html").read_text()
+    assert html.count("<tr>") - html.count("<thead>") == len(report(tmp_path)["issues"])
+
+
+def test_required_year_uses_dates_in_existing_cache_without_audio_reads(tmp_path, library, config_file):
+    for ext, date in [("mp3", "2001-02-03"), ("flac", "2002")]:
+        source = BytesIO(next(library.rglob(f"*.{ext}")).read_bytes())
+        if ext == "mp3":
+            audio = ID3(source)
+            audio.add(TDRC(encoding=3, text=[date]))
+            audio.save(source)
+        else:
+            audio = FLAC(source)
+            audio["date"] = [date]
+            source.seek(0)
+            audio.save(source)
+        target = library / f"Dated {ext}" / f"01 - Dated.{ext}"
+        target.parent.mkdir()
+        target.write_bytes(source.getvalue())  # New synthetic fixture, not a music-file edit.
+    before = signatures(library)
+    run_scan(tmp_path, config_file)
+    # Emulate the old cache model, which stored DATE but no derived YEAR.
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        for path, meta_json in con.execute("SELECT path,metadata_json FROM tracks").fetchall():
+            meta = json.loads(meta_json)
+            meta["tags"].pop("year", None)
+            con.execute("UPDATE tracks SET metadata_json=? WHERE path=?", (json.dumps(meta), path))
+    config = yaml.safe_load(config_file.read_text())
+    config["required_tags"] = ["year"]
+    config["custom_rules"] = [{"id": "year_in_date", "when": {"field": "year", "is_present": True},
+                              "field": "date", "template": {"operator": "contains", "pattern": "{year}"}}]
+    config_file.write_text(yaml.safe_dump(config))
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        run_scan(tmp_path, config_file)
+    issues = report(tmp_path)["issues"]
+    missing = [i for i in issues if i["rule"] == "missing_year"]
+    assert len(missing) == 2  # The two original fixtures genuinely have no date/year.
+    assert all("Dated" not in i["path"] for i in missing)
+    assert not any(i["rule"] == "year_in_date" for i in issues)
+    assert signatures(library) == before
+    with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert list(csv.DictReader(stream)) == issues

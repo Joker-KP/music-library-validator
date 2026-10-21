@@ -2,7 +2,7 @@
 
 import os
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from mutagen import MutagenError
@@ -18,16 +18,20 @@ class ScanResult:
     seen: int = 0
     read: int = 0
     errors: int = 0
+    folder_sizes: dict[str, int] = field(default_factory=dict)
 
 
-def discover(root, extensions):
+def discover(root, extensions, on_directory=None):
     """Yield files while their parent descriptor remains open; never follow links.
 
     Errors are fatal to discovery, so callers must roll back instead of pruning.
     Memory is proportional to directory width/depth, not total library size.
+    An optional callback receives recursive regular-file bytes per directory
+    after its descendants have been visited; symlinks never contribute bytes.
     """
 
     def walk(relative, dir_fd):
+        total_size = 0
         with os.scandir(dir_fd) as entries:
             names = sorted(entry.name for entry in entries)
         for name in names:
@@ -42,11 +46,16 @@ def discover(root, extensions):
                         raise OSError(
                             f"Directory changed during discovery: {root / relative / name}"
                         )
-                    yield from walk(relative / name, child_fd)
+                    total_size += (yield from walk(relative / name, child_fd))
                 finally:
                     os.close(child_fd)
-            elif stat.S_ISREG(info.st_mode) and Path(name).suffix.lower() in extensions:
-                yield root / relative / name, dir_fd, name, info
+            elif stat.S_ISREG(info.st_mode):
+                total_size += info.st_size
+                if Path(name).suffix.lower() in extensions:
+                    yield root / relative / name, dir_fd, name, info
+        if on_directory is not None:
+            on_directory(root / relative, total_size)
+        return total_size
 
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -62,9 +71,15 @@ def _signature(info):
 def scan(con, root: Path, extensions, pattern, full=False):
     scan_id = con.execute("INSERT INTO scans DEFAULT VALUES").lastrowid
     result = ScanResult(scan_id)
-    for path, dir_fd, name, info in discover(root, extensions):
+
+    def directory_size(path, size):
+        if str(path) in result.folder_sizes:
+            result.folder_sizes[str(path)] = size
+
+    for path, dir_fd, name, info in discover(root, extensions, on_directory=directory_size):
         result.seen += 1
         album = album_directory(path, root, pattern)
+        result.folder_sizes.setdefault(str(album), 0)
         old = database.get(con, path)
         if (
             not full

@@ -10,10 +10,12 @@ from pathlib import Path
 import yaml
 
 from . import database, scanner
+from .catalog import summarize_album
 from .config import load_config
 from .grouping import disc_number
+from .metadata import normalize_date_tags
 from .reports import write_reports
-from .safety import check_outputs, exclusive_lock, plain_path
+from .safety import REPORT_FILES, check_outputs, exclusive_lock, plain_path
 from .validation import validate
 
 
@@ -27,7 +29,7 @@ def run(config_path: Path, db: Path, reports: Path, full: bool = False):
     db, reports = plain_path(db).resolve(), plain_path(reports).resolve()
     check_outputs(root, db, reports)
     if db == config_path.resolve() or config_path.resolve() in {
-        reports / name for name in ("index.html", "report.json", "issues.csv")
+        reports / name for name in REPORT_FILES
     }:
         raise ValueError("Outputs must not overwrite the configuration")
     pattern = config["disc_folder_pattern"]
@@ -42,19 +44,23 @@ def run(config_path: Path, db: Path, reports: Path, full: bool = False):
             def normalized_rows():
                 for row in database.iter_rows(con):
                     row["metadata"] = json.loads(row.pop("metadata_json"))
+                    normalize_date_tags(row["metadata"].get("tags", {}))
                     row["disc_from_path"] = disc_number(Path(row["path"]), root, pattern)
                     yield row
 
             # Validate one album at a time, avoiding another full metadata copy.
             issues = []
-            for _, album_rows in groupby(normalized_rows(), key=lambda row: row["album_dir"]):
-                issues.extend(validate(list(album_rows), config))
+            catalog = []
+            for album, album_rows in groupby(normalized_rows(), key=lambda row: row["album_dir"]):
+                rows = list(album_rows)
+                issues.extend(validate(rows, config))
+                catalog.append(summarize_album(rows, result.folder_sizes[album]))
             count = con.execute("SELECT count(*) FROM tracks").fetchone()[0]
             outstanding = con.execute(
                 "SELECT count(*) FROM tracks WHERE error IS NOT NULL"
             ).fetchone()[0]
             con.commit()
-            summary = write_reports(reports, issues, count)
+            summary = write_reports(reports, issues, count, catalog)
         finally:
             con.rollback()
             con.close()
@@ -64,6 +70,7 @@ def run(config_path: Path, db: Path, reports: Path, full: bool = False):
         f"{summary['albums_with_issues']} albums with {len(issues)} issues."
     )
     print(f"Reports: {reports.resolve() / 'index.html'}")
+    print(f"Catalog: {reports.resolve() / 'catalog.html'}")
     return 0
 
 

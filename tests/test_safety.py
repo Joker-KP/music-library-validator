@@ -34,6 +34,25 @@ def test_unsafe_outputs_rejected_without_source_changes(tmp_path, library, confi
     assert victim.read_bytes() == before
 
 
+@pytest.mark.parametrize("filename", ["catalog.html", "catalog.csv", "catalog.json"])
+def test_catalog_symlinks_and_config_collisions_are_rejected(tmp_path, library, config_file, filename):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    victim = next(library.rglob("*.mp3"))
+    before = victim.read_bytes()
+    output = reports / filename
+    output.symlink_to(victim)
+    with pytest.raises(ValueError, match="symlink"):
+        cli.run(config_file, tmp_path / "cache.sqlite", reports)
+    assert victim.read_bytes() == before
+    output.unlink()
+    contents = config_file.read_bytes()
+    output.write_bytes(contents)
+    with pytest.raises(ValueError, match="configuration"):
+        cli.run(output, tmp_path / "cache.sqlite", reports)
+    assert output.read_bytes() == contents
+
+
 def test_other_process_cannot_take_scan_lock(tmp_path):
     lock = tmp_path / "cache.lock"
     with exclusive_lock(lock):

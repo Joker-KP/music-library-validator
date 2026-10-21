@@ -19,7 +19,15 @@
 
 ## P1 — quality features
 
-- Conditionals and declarative cross-tag formulas with safe schema (never eval arbitrary Python/YAML).
+- Completed: all-album catalog in HTML/CSV/JSON with worst-track quality,
+  recursive folder size and track count, published alongside issue reports.
+- Completed: normalized `year`/`date` support for required fields and templates,
+  including existing cached dates without rereading audio. Calendar validity
+  and conflicting year/date checks remain future work.
+- Completed: conditional `when` selectors and safe template `equals`, `regex`,
+  `contains` comparisons, with MP3/FLAC lyricist/original-lyricist/compilation support.
+- Richer Boolean conditions, numeric comparisons and declarative cross-tag
+  formulas with safe schema (never eval arbitrary Python/YAML).
 - Album sorting, issue filters, issue severity and suppressed/acknowledged flags.
 - FLAC stream verification as a separate opt-in operation with cached integrity results.
 - Optional checksum verification mode (slower), handling moved/renamed files.

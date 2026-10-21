@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from music_validator.reports import write_reports
+from music_validator.safety import REPORT_FILES
 
 
 def issues(message):
@@ -19,6 +20,54 @@ def issues(message):
             "message": message,
         }
     ]
+
+
+@pytest.mark.parametrize("filename", ["catalog.html", "catalog.json", "catalog.csv"])
+def test_catalog_failure_preserves_all_six_outputs(tmp_path, filename):
+    dest = tmp_path / "reports"
+    write_reports(dest, issues("old"), 1)
+    before = {name: (dest / name).read_bytes() for name in REPORT_FILES}
+    current = (dest / "current").readlink()
+    real_open = Path.open
+
+    def fail_catalog(path, mode="r", *args, **kwargs):
+        if path.name == filename and "w" in mode:
+            raise OSError("catalog disk full")
+        return real_open(path, mode, *args, **kwargs)
+
+    with patch.object(Path, "open", fail_catalog), pytest.raises(OSError):
+        write_reports(dest, issues("new"), 1)
+    assert (dest / "current").readlink() == current
+    assert all((dest / name).read_bytes() == value for name, value in before.items())
+
+
+def test_catalog_html_escapes_metadata_and_folder_attributes(tmp_path):
+    attack = '<script>alert("x")</script>'
+    row = {"album_dir": '" onmouseover="alert(1)', "album_artist": attack,
+           "year": "2001", "album": "Żółć & Łódź", "quality": "FLAC",
+           "folder_size_mb": 1.25, "total_tracks": 2}
+    write_reports(tmp_path, [], 2, [row])
+    document = (tmp_path / "catalog.html").read_text()
+    assert attack not in document
+    assert "&lt;script&gt;" in document
+    assert "Żółć &amp; Łódź" in document
+    assert 'title="&quot; onmouseover=&quot;alert(1)"' in document
+    assert document.count('<th scope="col">') == 6
+    assert json.loads((tmp_path / "catalog.json").read_text())["albums"] == [row]
+
+
+def test_adding_catalog_to_existing_three_file_generation(tmp_path):
+    dest = tmp_path / "reports"
+    old = dest / "generations/scan-old"
+    old.mkdir(parents=True)
+    for name in ("index.html", "issues.csv", "report.json"):
+        (old / name).write_text("old")
+        (dest / name).symlink_to(Path("current") / name)
+    (dest / "current").symlink_to("generations/scan-old")
+    write_reports(dest, [], 0)
+    assert all((dest / name).is_file() for name in REPORT_FILES)
+    assert all((old / name).read_text() == "old" for name in ("index.html", "issues.csv", "report.json"))
+    assert json.loads((dest / "catalog.json").read_text())["albums"] == []
 
 
 def test_atomic_report_failure_preserves_previous_generation(tmp_path):

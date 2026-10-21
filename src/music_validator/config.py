@@ -1,6 +1,7 @@
 """Validate the declarative configuration before opening any writable outputs."""
 
 import re
+from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
 from string import Formatter
@@ -8,6 +9,7 @@ from string import Formatter
 import yaml
 
 from .characters import DEFAULT_ALLOWED_CHARS, allowed_characters
+from .custom_rules import OPERATORS
 from .grouping import DEFAULT_DISC_PATTERN
 
 DEFAULTS = {
@@ -92,6 +94,50 @@ def check_template(value, where, filename=False):
         raise ValueError(f"Invalid {where} template: {exc}") from exc
 
 
+def check_when(condition):
+    _object(
+        condition,
+        {"format", "is_compilation", "field", "is_present", "contains"},
+        "custom_rules.when",
+    )
+    if "format" in condition and condition["format"] not in ("mp3", "flac"):
+        raise ValueError("custom_rules.when.format must be mp3 or flac")
+    for key in ("is_compilation", "is_present"):
+        if key in condition and type(condition[key]) is not bool:
+            raise ValueError(f"custom_rules.when.{key} must be a boolean")
+    if "field" in condition:
+        _name(condition["field"], "custom_rules.when.field")
+        if not ({"is_present", "contains"} & condition.keys()):
+            raise ValueError("custom_rules.when.field requires is_present or contains")
+    elif {"is_present", "contains"} & condition.keys():
+        raise ValueError("custom_rules.when.is_present/contains requires field")
+    if "contains" in condition and (
+        not isinstance(condition["contains"], str)
+        or not condition["contains"]
+        or len(condition["contains"]) > 4096
+    ):
+        raise ValueError(
+            "custom_rules.when.contains must be a nonempty string of at most 4096 characters"
+        )
+
+
+def check_custom_template(rule):
+    template = rule["template"]
+    _object(template, {"pattern", "operator"}, "custom_rules.template")
+    if "pattern" not in template or "operator" not in template:
+        raise ValueError("custom_rules.template requires operator and pattern")
+    if template["operator"] not in OPERATORS:
+        raise ValueError("custom_rules.template.operator must be equals, regex or contains")
+    check_template(template["pattern"], "custom_rules.template.pattern")
+    if template["operator"] == "regex":
+        # Validate syntax with literal stand-ins for tag values, before outputs.
+        probe = template["pattern"].format_map(defaultdict(lambda: "tag"))
+        try:
+            re.compile(probe)
+        except re.error as exc:
+            raise ValueError(f"Invalid custom_rules.template.pattern regex: {exc}") from exc
+
+
 def load_config(path: Path) -> dict:
     data = yaml.load(path.read_text(encoding="utf-8"), Loader=ConfigLoader)
     _object(data, set(DEFAULTS) | {"library_root"}, "configuration")
@@ -135,8 +181,12 @@ def load_config(path: Path) -> dict:
         raise ValueError("custom_rules must be a list")  # noqa: TRY004
     identifiers = set()
     for rule in config["custom_rules"]:
-        _object(rule, {"id", "field", "equals_template", "severity"}, "custom_rules entry")
-        for key in ("id", "field", "equals_template"):
+        _object(
+            rule,
+            {"id", "field", "template", "when", "severity"},
+            "custom_rules entry",
+        )
+        for key in ("id", "field", "template"):
             if key not in rule:
                 raise ValueError(f"custom_rules entry requires {key}")
         _name(rule["id"], "custom rule id")
@@ -146,5 +196,7 @@ def load_config(path: Path) -> dict:
         identifiers.add(rule["id"])
         if rule.get("severity", "warning") not in ("info", "warning", "error"):
             raise ValueError("custom rule severity must be info, warning or error")
-        check_template(rule["equals_template"], "custom_rules.equals_template")
+        if "when" in rule:
+            check_when(rule["when"])
+        check_custom_template(rule)
     return config

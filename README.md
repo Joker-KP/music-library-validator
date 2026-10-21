@@ -18,7 +18,8 @@ python -m pytest -q
 1. Edit `compose.yaml`, replacing `/volume1/music` with your music directory.
 2. `mkdir -p data reports`; ensure both folders are writable by the chosen `PUID:PGID` (default 1000:1000).
 3. `docker compose build && docker compose run --rm music-validator`
-4. Open `reports/index.html` locally; CSV and JSON are alongside it.
+4. Open `reports/index.html` for issues or `reports/catalog.html` for all albums;
+   each has CSV and JSON exports alongside it.
 5. Subsequent runs use SQLite cache. To rebuild metadata: `docker compose run --rm music-validator scan --config /config/rules.yaml --db /data/library.sqlite --reports /reports --full-scan`.
 
 In Docker use `/music` in `rules.yaml`. Music is mounted `:ro`; SQLite and reports are writable volumes. No web server or port is exposed. Can be scheduled with Synology Task Scheduler or cron. The container starts only for a scan.
@@ -35,7 +36,7 @@ fail immediately with exit code 2.
 
 - Audit existing MP3 and FLAC files, never rename, rewrite tags, or alter music automatically.
 - Required fields include `title`, `artist`, `album`, `tracknumber`, `comment`; embedded art is mandatory by default. Configure rule choices in YAML.
-- Support cross-tag relationships (example: `comment == artist + ' - ' + album`) and title/filename conventions; custom equality templates work today.
+- Support conditional cross-tag relationships and title/filename conventions through custom templates with `equals`, `regex` and `contains` operators.
 - Group albums by **directory**, not tags. Directories named `CD1`, `CD 02`, `Disc-3`, `Disk_04`, or ending with a separated disc marker such as `Some Album Name - CD2`, are disc subfolders of their parent. An album with two discs is one report group, and track 1 on disc 1 and disc 2 are not duplicates.
 - Report *albums needing attention*, with track-level explanations in expandable HTML sections and machine-readable CSV/JSON.
 - SQLite caches parsed metadata by path, size and nanosecond mtime. New/changed files are re-read; removed files are purged after a successful traversal. **All cached entries are revalidated against current YAML rules every run**, so rule edits do not require a metadata rescan.
@@ -73,9 +74,45 @@ Example custom rule (replace `custom_rules: []`):
 custom_rules:
   - id: comment_artist_album
     field: comment
-    equals_template: '{artist} - {album}'
+    template:
+      operator: equals
+      pattern: '{artist} - {album}'
     severity: warning
 ```
+
+Add `year` to `required_tags` to require a release year. MP3 `TDRC`/legacy
+`TYER` and FLAC `DATE` expose a normalized `year` from a leading four-digit
+year, while preserving the complete `date`. An explicit FLAC `YEAR` takes
+precedence and also supplies `date` if it is missing. This works with existing
+cached dates without a full scan. Required fields check presence, not calendar
+validity; see `docs/RULES.md` for supported date forms.
+
+To require a lyricist credit only when the lyricist tag is present:
+
+```yaml
+custom_rules:
+  - id: comment_lyricist
+    when: {field: lyricist, is_present: true}
+    field: comment
+    template:
+      operator: contains
+      pattern: 'słowa: {lyricist}'
+    severity: warning
+```
+
+For lyricist `Jan Łódzki`, a comment containing `słowa: Jan Łódzki` anywhere
+passes. Missing/blank lyricist skips the rule. Other available conditions are
+`when: {format: flac}`, `when: {is_compilation: true}`,
+`when: {field: origlyricist, is_present: true}` and
+`when: {field: title, contains: some-string}`. Multiple selectors in one `when`
+mapping all must match. `equals` compares the entire rendered pattern literally;
+`contains` requires the entire rendered substring; `regex` matches the whole field.
+Tag values substituted into regex patterns are escaped as literal text. Double
+regex quantifier braces in templates, e.g. `\d{{2}}` renders as `\d{2}`.
+Every custom rule requires `template.operator` and `template.pattern`.
+The removed `equals_template` key and `equal` operator are rejected; migrate
+existing rules to `template: {operator: equals, pattern: '...'}`.
+Full details are in `docs/RULES.md`.
 
 Examples of grouping:
 
@@ -89,7 +126,7 @@ Examples of grouping:
 
 ## Implementation status
 
-Implemented: recursive file enumeration, ID3 and FLAC Vorbis Comment normalization via Mutagen, MP3 APIC / FLAC Picture detection, album directory grouping with disc suffixes, disc-folder fallback, missing field / cover / filename regex and allowed-character checks, optional filename template and custom equality rules, album/title and albumartist consistency options, duplicate `(disc, track)` detection, optional cover-hash consistency, SQLite incremental cache, read errors and three report formats.
+Implemented: recursive file enumeration, ID3 and FLAC Vorbis Comment normalization via Mutagen, MP3 APIC / FLAC Picture detection, album directory grouping with disc suffixes, disc-folder fallback, missing field / cover / filename regex and allowed-character checks, optional filename template and conditional custom rules, lyricist/original-lyricist/compilation normalization, album/title and albumartist consistency options, duplicate `(disc, track)` detection, optional cover-hash consistency, SQLite incremental cache, read errors, and issue/catalog reports in HTML, CSV and JSON.
 
 Not implemented yet: MP3 cover image dimension measurement; FLAC stream integrity check (`flac -t`); hashing music/audio data; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; a persistent web UI; reproducible locked dependencies; structured logging and performance benchmarks.
 
@@ -130,11 +167,18 @@ changes also trigger metadata refresh; ordinary YAML edits do not. Back up an
 existing database before upgrading; an older binary must not reuse the migrated
 database. Unsupported future schema versions are refused.
 
-Parser version 2 refreshes existing cached metadata once to correct FLAC artwork
-dimensions. No database deletion or `--full-scan` is necessary; later unchanged
+Parser version 3 refreshes older cached metadata once to include MP3 lyricist,
+original lyricist and compilation tags, and FLAC original-lyricist aliases.
+Parser version 4 adds MP3 stream bitrate for catalog quality and refreshes older
+entries once; subsequent scans reuse it. Parser version 2 introduced corrected
+FLAC artwork dimensions. No database
+deletion or `--full-scan` is necessary; later unchanged
 scans use the cache normally. Install updated dependencies with
 `pip install -e '.[dev]'`, or rebuild the Docker image, before running the upgraded
 scanner; Pillow is now a runtime dependency.
+
+Once metadata has refreshed, edits to custom-rule conditions, patterns and
+operators revalidate cached tracks without rereading music files.
 
 A cache is bound to the resolved library path, root device/inode and normalized
 extension set. Scope changes are refused without deleting records. Use a separate
@@ -144,9 +188,11 @@ adopted only when all stored paths fit the requested root and extensions.
 
 ## Report publication
 
-`reports/index.html`, `issues.csv` and `report.json` remain the entry points with
-the same contents/schema. They are links through `reports/current`, which is
-atomically switched only after all three files are written and synced in a new
+`reports/index.html`, `issues.csv` and `report.json` remain the issue-report entry
+points with the same contents/schema. `catalog.html`, `catalog.csv` and
+`catalog.json` contain all detected albums, including those without issues.
+All six are links through `reports/current`, which is
+atomically switched only after all six files are written and synced in a new
 `reports/generations/scan-*` directory. Existing regular report files are migrated
 without changing their contents until publication. Failed generation writes leave
 the previous report set available.
@@ -156,5 +202,38 @@ all files from that generation. The HTML file is standalone; use `cp -L` when
 exporting the entry-point link. Old generations are retained so pinned readers
 remain valid; remove unneeded generations only while no scans/readers use them,
 and keep the generation referenced by `current`. This retention uses disk space.
+
+## Album catalog
+
+Every scan also creates a standalone `reports/catalog.html` table with these
+columns: album artist, year, album, quality, folder size (MB), total number of
+tracks. Disc folders share one album row, using the same directory identity as
+validation. Rows are ordered by album directory, independently of tag values.
+
+- Album artist uses `albumartist`, falling back to `artist` for each track.
+  Missing artist/year values display `Unknown`; missing album names fall back
+  to the album directory name. Distinct values within one album are sorted and
+  joined with `; ` so inconsistent tags remain visible.
+- Quality is the worst track quality in the album: FLAC ranks above MP3, then
+  MP3 tracks compare by bitrate (e.g. `MP3 320`, `MP3 128`). Bitrates are rounded
+  to the nearest kbit/s; VBR uses Mutagen's per-file bitrate estimate, rather than
+  the lowest individual frame. Unavailable bitrate displays `MP3 (unknown
+  bitrate)` and ranks below known quality; a metadata read error displays
+  `Unknown`. This is a format/bitrate summary, not an audio-integrity guarantee.
+- Folder size sums the logical sizes of all regular files recursively under
+  that album directory, including artwork and other sidecars. Symlinks and
+  directory overhead are excluded. MB means 1,000,000 bytes, rounded to two
+  decimal places. If a nested folder is also a separate album, its bytes count
+  in both its own folder size and the parent's recursive size. Sizes are
+  collected during discovery on every scan, even when audio metadata is cached.
+- Track count includes all detected MP3/FLAC files in the configured extension
+  scope, including files whose metadata could not be read. An empty directory
+  with no detected tracks is not an album.
+
+`catalog.csv` uses six columns: `album_artist`, `year`, `album`, `quality`,
+`folder_size_mb`, `total_tracks`. `catalog.json` contains `generated_at` and an
+`albums` array with the same fields (numeric size/count), plus `album_dir` for
+unambiguous directory identity. The HTML exposes the directory in each row's
+hover tooltip. All catalog formats share the issue report's generation time.
 
 See `docs/ARCHITECTURE.md`, `docs/RULES.md`, `docs/ROADMAP.md`, and `AGENTS.md`.

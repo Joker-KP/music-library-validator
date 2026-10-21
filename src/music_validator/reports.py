@@ -1,4 +1,4 @@
-"""Static report outputs: HTML (album-oriented), JSON and CSV."""
+"""Atomic issue and album catalog outputs in standalone HTML, JSON and CSV."""
 
 import csv
 import html
@@ -10,7 +10,43 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .catalog import CATALOG_COLUMNS
 from .safety import REPORT_FILES, check_report_directory
+
+
+def _render_catalog(dest: Path, albums: list[dict], generated_at: str):
+    (dest / "catalog.json").write_text(
+        json.dumps({"generated_at": generated_at, "albums": albums}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    with (dest / "catalog.csv").open("w", newline="", encoding="utf-8-sig") as stream:
+        writer = csv.DictWriter(
+            stream, fieldnames=[key for key, _ in CATALOG_COLUMNS], extrasaction="ignore"
+        )
+        writer.writeheader()
+        writer.writerows(albums)
+    headers = "".join(f'<th scope="col">{label}</th>' for _, label in CATALOG_COLUMNS)
+    rows = []
+    for album in albums:
+        cells = "".join(f"<td>{html.escape(str(album[key]))}</td>" for key, _ in CATALOG_COLUMNS)
+        rows.append(f'<tr title="{html.escape(album["album_dir"], quote=True)}">{cells}</tr>')
+    document = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Music library catalog</title><style>
+body{{font:15px system-ui,sans-serif;margin:2rem;line-height:1.5}}
+table{{border-collapse:collapse;width:100%}}
+th,td{{padding:.5rem;border-bottom:1px solid #aaa;text-align:left;overflow-wrap:anywhere}}
+.table{{overflow-x:auto}}
+</style></head><body><h1>Music library catalog</h1>
+<p>{len(albums)} albums · Generated {html.escape(generated_at)}</p>
+<p>Quality is the lowest in each album; MP3 bitrate is in kbit/s.
+Folder sizes include all regular files recursively (1 MB = 1,000,000 bytes).</p>
+<div class="table"><table><thead><tr>{headers}</tr></thead>
+<tbody>{"".join(rows)}</tbody></table></div>
+{"<p>No albums found.</p>" if not albums else ""}
+</body></html>"""
+    (dest / "catalog.html").write_text(document, encoding="utf-8")
 
 
 def _render(dest: Path, issues: list, count: int):
@@ -97,8 +133,8 @@ def _aliases(dest):
     _sync_directory(dest)
 
 
-def write_reports(dest: Path, issues: list, count: int):
-    """Publish immutable outputs with one atomic `current` pointer replacement.
+def write_reports(dest: Path, issues: list, count: int, catalog: list | None = None):
+    """Publish all six outputs with one atomic `current` pointer replacement.
 
     Callers hold the report-directory lock for the entire scan/publication.
     Multi-file consumers can resolve `current` once to pin one generation.
@@ -112,6 +148,7 @@ def write_reports(dest: Path, issues: list, count: int):
     published = False
     try:
         summary = _render(generation, issues, count)
+        _render_catalog(generation, catalog or [], summary["generated_at"])
         for name in REPORT_FILES:
             with (generation / name).open("rb") as source:
                 os.fsync(source.fileno())

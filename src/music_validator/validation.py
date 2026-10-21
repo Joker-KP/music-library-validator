@@ -5,6 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .characters import DEFAULT_ALLOWED_CHARS, allowed_characters
+from .custom_rules import failure_message
 
 
 def issue(row, rule, message, severity="warning"):
@@ -89,18 +90,17 @@ def validate(rows, config):
                 )
         for rule in config.get("custom_rules", []):
             try:
-                actual = str(tags.get(rule["field"], ""))
-                expected = rule["equals_template"].format_map(tags)
-                if actual != expected:
+                message = failure_message(rule, meta)
+                if message is not None:
                     issues.append(
                         issue(
                             row,
                             rule["id"],
-                            f"Expected '{expected}', found '{actual}'",
+                            message,
                             rule.get("severity", "warning"),
                         )
                     )
-            except (KeyError, ValueError, TypeError, AttributeError, IndexError) as exc:
+            except (KeyError, ValueError, TypeError, AttributeError, IndexError, re.error) as exc:
                 issues.append(
                     issue(
                         row, rule.get("id", "custom_rule"), f"Rule evaluation error: {exc}", "error"
