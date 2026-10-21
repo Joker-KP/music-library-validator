@@ -6,7 +6,7 @@ services:
       TZ: Europe/Warsaw
     volumes:
       # Change this to your actual music directory.
-      - /volume1/music:/music:ro
+      - "/mnt/music:/music:ro"
       - ./config:/config:ro
       - ./data:/data
       - ./reports:/reports

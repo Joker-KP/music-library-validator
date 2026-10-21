@@ -1,68 +1,69 @@
 """CLI entry point. No write access is needed to music files."""
+
 import argparse
 import json
+import sqlite3
 import sys
+from itertools import groupby
 from pathlib import Path
 
 import yaml
 
-from . import database
-from .grouping import album_directory, disc_number
-from .metadata import read_metadata
+from . import database, scanner
+from .config import load_config
+from .grouping import disc_number
 from .reports import write_reports
+from .safety import check_outputs, exclusive_lock, plain_path
 from .validation import validate
 
 
 def run(config_path: Path, db: Path, reports: Path, full: bool = False):
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config = load_config(config_path)
     root = Path(config["library_root"]).resolve()
     if not root.is_dir():
         raise ValueError(f"Library directory not found: {root}")
-    con = database.connect(db)
-    pattern = config.get("disc_folder_pattern")
-    extensions = {str(x).lower() for x in config.get("extensions", [".mp3", ".flac"])}
-    seen = set()
-    changed = 0
-    errors = 0
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in extensions:
-            continue
-        # Avoid symlinks escaping the read-only music root.
-        if path.is_symlink():
-            continue
-        seen.add(str(path))
-        stat = path.stat()
-        old = database.get(con, path)
-        if not full and old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns:
-            continue
-        album = album_directory(path, root, pattern) if pattern else album_directory(path, root)
+    # Reject links before resolving; normalize '..' before mkdir can create
+    # any otherwise-unused component inside the library.
+    db, reports = plain_path(db).resolve(), plain_path(reports).resolve()
+    check_outputs(root, db, reports)
+    if db == config_path.resolve() or config_path.resolve() in {
+        reports / name for name in ("index.html", "report.json", "issues.csv")
+    }:
+        raise ValueError("Outputs must not overwrite the configuration")
+    pattern = config["disc_folder_pattern"]
+    extensions = set(config["extensions"])
+    with exclusive_lock(Path(str(db) + ".lock")), exclusive_lock(reports / ".scan.lock"):
+        check_outputs(root, db, reports)
+        con = database.connect(db)
         try:
-            metadata = read_metadata(path)
-            error = None
-        except Exception as exc:
-            metadata = {}
-            error = f"{type(exc).__name__}: {exc}"
-            errors += 1
-        database.upsert(con, path, album, stat, metadata, error)
-        changed += 1
-    # Delete cached records for files absent from this successful full directory walk.
-    for row in database.rows(con):
-        if row["path"] not in seen:
-            con.execute("DELETE FROM tracks WHERE path=?", (row["path"],))
-    con.commit()
-    indexed = database.rows(con)
-    rows = []
-    for row in indexed:
-        row["metadata"] = json.loads(row.pop("metadata_json"))
-        path = Path(row["path"])
-        row["disc_from_path"] = disc_number(path, root, pattern) if pattern else disc_number(path, root)
-        rows.append(row)
-    issues = validate(rows, config)
-    summary = write_reports(reports, issues, len(rows))
-    print(f"Indexed {len(rows)} tracks; reread {changed}; read errors this run {errors}; "
-          f"{summary['albums_with_issues']} albums with {len(issues)} issues.")
+            database.bind_library(con, root, extensions)
+            result = scanner.scan(con, root, extensions, pattern, full)
+
+            def normalized_rows():
+                for row in database.iter_rows(con):
+                    row["metadata"] = json.loads(row.pop("metadata_json"))
+                    row["disc_from_path"] = disc_number(Path(row["path"]), root, pattern)
+                    yield row
+
+            # Validate one album at a time, avoiding another full metadata copy.
+            issues = []
+            for _, album_rows in groupby(normalized_rows(), key=lambda row: row["album_dir"]):
+                issues.extend(validate(list(album_rows), config))
+            count = con.execute("SELECT count(*) FROM tracks").fetchone()[0]
+            outstanding = con.execute(
+                "SELECT count(*) FROM tracks WHERE error IS NOT NULL"
+            ).fetchone()[0]
+            con.commit()
+            summary = write_reports(reports, issues, count)
+        finally:
+            con.rollback()
+            con.close()
+    print(
+        f"Indexed {count} tracks; reread {result.read}; read errors this run {result.errors}; "
+        f"outstanding read errors {outstanding}; "
+        f"{summary['albums_with_issues']} albums with {len(issues)} issues."
+    )
     print(f"Reports: {reports.resolve() / 'index.html'}")
-    con.close()
     return 0
 
 
@@ -77,9 +78,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return run(args.config, args.db, args.reports, args.full_scan)
-    except (OSError, ValueError, yaml.YAMLError) as exc:
+    except (OSError, ValueError, yaml.YAMLError, sqlite3.Error) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
+
 
 if __name__ == "__main__":
     sys.exit(main())
