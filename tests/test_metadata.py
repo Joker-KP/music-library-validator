@@ -178,17 +178,20 @@ def test_mp3_legacy_tyer_exposes_year():
     assert result["tags"]["year"] == result["tags"]["date"] == "1999"
 
 
-@pytest.mark.parametrize("tags,expected", [
-    ({"DATE": ["1999"]}, {"date": "1999", "year": "1999"}),
-    ({"DATE": ["2001-02-03"]}, {"date": "2001-02-03", "year": "2001"}),
-    ({"DATE": [" 2001-02-03 "]}, {"date": " 2001-02-03 ", "year": "2001"}),
-    ({"DATE": ["2001/02/03"]}, {"date": "2001/02/03", "year": "2001"}),
-    ({"DATE": ["2001.02.03"]}, {"date": "2001.02.03", "year": "2001"}),
-    ({"YEAR": ["2000"]}, {"date": "2000", "year": "2000"}),
-    ({"YEAR": ["2000"], "DATE": [""]}, {"date": "2000", "year": "2000"}),
-    ({"YEAR": [""], "DATE": ["2001-02-03"]}, {"date": "2001-02-03", "year": "2001"}),
-    ({"YEAR": ["2000"], "DATE": ["2001-02-03"]}, {"date": "2001-02-03", "year": "2000"}),
-])
+@pytest.mark.parametrize(
+    "tags,expected",
+    [
+        ({"DATE": ["1999"]}, {"date": "1999", "year": "1999"}),
+        ({"DATE": ["2001-02-03"]}, {"date": "2001-02-03", "year": "2001"}),
+        ({"DATE": [" 2001-02-03 "]}, {"date": " 2001-02-03 ", "year": "2001"}),
+        ({"DATE": ["2001/02/03"]}, {"date": "2001/02/03", "year": "2001"}),
+        ({"DATE": ["2001.02.03"]}, {"date": "2001.02.03", "year": "2001"}),
+        ({"YEAR": ["2000"]}, {"date": "2000", "year": "2000"}),
+        ({"YEAR": ["2000"], "DATE": [""]}, {"date": "2000", "year": "2000"}),
+        ({"YEAR": [""], "DATE": ["2001-02-03"]}, {"date": "2001-02-03", "year": "2001"}),
+        ({"YEAR": ["2000"], "DATE": ["2001-02-03"]}, {"date": "2001-02-03", "year": "2000"}),
+    ],
+)
 def test_flac_normalizes_year_and_date(monkeypatch, tags, expected):
     monkeypatch.setattr(metadata, "FLAC", lambda source: SimpleNamespace(tags=tags, pictures=[]))
     result = metadata.read_metadata(Path("01 - Song.flac"))
@@ -197,7 +200,9 @@ def test_flac_normalizes_year_and_date(monkeypatch, tags, expected):
 
 @pytest.mark.parametrize("date", ["", "unknown", "19999", "1999junk", "recorded in 1999"])
 def test_unrecognized_date_does_not_invent_year(monkeypatch, date):
-    monkeypatch.setattr(metadata, "FLAC", lambda source: SimpleNamespace(tags={"date": [date]}, pictures=[]))
+    monkeypatch.setattr(
+        metadata, "FLAC", lambda source: SimpleNamespace(tags={"date": [date]}, pictures=[])
+    )
     result = metadata.read_metadata(Path("01 - Song.flac"))
     assert not result["tags"].get("year")
     row = {"album_dir": "/music/A", "path": "/music/A/01 - Song.flac", "metadata": result}

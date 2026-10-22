@@ -46,7 +46,7 @@ def discover(root, extensions, on_directory=None):
                         raise OSError(
                             f"Directory changed during discovery: {root / relative / name}"
                         )
-                    total_size += (yield from walk(relative / name, child_fd))
+                    total_size += yield from walk(relative / name, child_fd)
                 finally:
                     os.close(child_fd)
             elif stat.S_ISREG(info.st_mode):

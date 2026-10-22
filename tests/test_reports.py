@@ -43,9 +43,15 @@ def test_catalog_failure_preserves_all_six_outputs(tmp_path, filename):
 
 def test_catalog_html_escapes_metadata_and_folder_attributes(tmp_path):
     attack = '<script>alert("x")</script>'
-    row = {"album_dir": '" onmouseover="alert(1)', "album_artist": attack,
-           "year": "2001", "album": "Żółć & Łódź", "quality": "FLAC",
-           "folder_size_mb": 1.25, "total_tracks": 2}
+    row = {
+        "album_dir": '" onmouseover="alert(1)',
+        "album_artist": attack,
+        "year": "2001",
+        "album": "Żółć & Łódź",
+        "quality": "FLAC",
+        "folder_size_mb": 1.25,
+        "total_tracks": 2,
+    }
     write_reports(tmp_path, [], 2, [row])
     document = (tmp_path / "catalog.html").read_text()
     assert attack not in document
@@ -66,7 +72,9 @@ def test_adding_catalog_to_existing_three_file_generation(tmp_path):
     (dest / "current").symlink_to("generations/scan-old")
     write_reports(dest, [], 0)
     assert all((dest / name).is_file() for name in REPORT_FILES)
-    assert all((old / name).read_text() == "old" for name in ("index.html", "issues.csv", "report.json"))
+    assert all(
+        (old / name).read_text() == "old" for name in ("index.html", "issues.csv", "report.json")
+    )
     assert json.loads((dest / "catalog.json").read_text())["albums"] == []
 
 

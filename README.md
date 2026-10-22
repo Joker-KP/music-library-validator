@@ -132,7 +132,16 @@ Not implemented yet: MP3 cover image dimension measurement; FLAC stream integrit
 
 ## Verification
 
-Run `python -m pytest -q` after installing `.[dev]`. Tests include real synthetic
+After installing `.[dev]`, run the same checks as GitHub Actions:
+
+```bash
+python -m pytest -q
+ruff check src tests
+ruff format --check src tests
+```
+
+Use `ruff format src tests` to apply formatting before committing.
+Tests include real synthetic
 MP3 and FLAC fixtures and subprocess CLI scans, Unicode metadata, cache reuse,
 YAML-only changes, custom disc patterns, migration, interruption, traversal/read
 failures, concurrent ownership, unsafe outputs, and report publication failures.

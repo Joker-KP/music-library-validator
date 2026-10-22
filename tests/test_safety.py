@@ -35,7 +35,9 @@ def test_unsafe_outputs_rejected_without_source_changes(tmp_path, library, confi
 
 
 @pytest.mark.parametrize("filename", ["catalog.html", "catalog.csv", "catalog.json"])
-def test_catalog_symlinks_and_config_collisions_are_rejected(tmp_path, library, config_file, filename):
+def test_catalog_symlinks_and_config_collisions_are_rejected(
+    tmp_path, library, config_file, filename
+):
     reports = tmp_path / "reports"
     reports.mkdir()
     victim = next(library.rglob("*.mp3"))

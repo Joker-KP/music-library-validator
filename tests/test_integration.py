@@ -36,12 +36,21 @@ def report(tmp_path):
 
 
 def test_catalog_includes_clean_albums_discs_sizes_and_cache(tmp_path, library, config_file):
-    config_file.write_text(yaml.safe_dump({
-        "library_root": str(library), "required_tags": [], "artwork": {"required": False},
-        "filename": {"regex": None, "allowed_chars": ""},
-        "album_rules": {"consistent_album": False, "unique_disc_track": False,
-                        "disc_number_mismatch": False},
-    }))
+    config_file.write_text(
+        yaml.safe_dump(
+            {
+                "library_root": str(library),
+                "required_tags": [],
+                "artwork": {"required": False},
+                "filename": {"regex": None, "allowed_chars": ""},
+                "album_rules": {
+                    "consistent_album": False,
+                    "unique_disc_track": False,
+                    "disc_number_mismatch": False,
+                },
+            }
+        )
+    )
     album = next(library.rglob("*.mp3")).parent.parent
     attachment = album / "cover.jpg"
     attachment.write_bytes(b"a" * 12345)
@@ -91,13 +100,18 @@ def test_catalog_refreshes_old_metadata_once_for_bitrate(tmp_path, config_file):
         for path, raw in con.execute("SELECT path,metadata_json FROM tracks").fetchall():
             metadata = json.loads(raw)
             metadata.pop("bitrate", None)
-            con.execute("UPDATE tracks SET parser_version=3,metadata_json=? WHERE path=?",
-                        (json.dumps(metadata), path))
+            con.execute(
+                "UPDATE tracks SET parser_version=3,metadata_json=? WHERE path=?",
+                (json.dumps(metadata), path),
+            )
     with patch.object(scanner, "read_metadata", wraps=scanner.read_metadata) as reader:
         run_scan(tmp_path, config_file)
     assert reader.call_count == 2
     assert database.PARSER_VERSION > 3
-    assert json.loads((tmp_path / "reports/catalog.json").read_text())["albums"][0]["quality"] == "MP3 64"
+    assert (
+        json.loads((tmp_path / "reports/catalog.json").read_text())["albums"][0]["quality"]
+        == "MP3 64"
+    )
     with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
         run_scan(tmp_path, config_file)
 
@@ -472,7 +486,9 @@ def test_conditional_rules_normalization_cache_and_reports(tmp_path, custom_rule
     assert html.count("<tr>") - html.count("<thead>") == len(report(tmp_path)["issues"])
 
 
-def test_required_year_uses_dates_in_existing_cache_without_audio_reads(tmp_path, library, config_file):
+def test_required_year_uses_dates_in_existing_cache_without_audio_reads(
+    tmp_path, library, config_file
+):
     for ext, date in [("mp3", "2001-02-03"), ("flac", "2002")]:
         source = BytesIO(next(library.rglob(f"*.{ext}")).read_bytes())
         if ext == "mp3":
@@ -497,8 +513,14 @@ def test_required_year_uses_dates_in_existing_cache_without_audio_reads(tmp_path
             con.execute("UPDATE tracks SET metadata_json=? WHERE path=?", (json.dumps(meta), path))
     config = yaml.safe_load(config_file.read_text())
     config["required_tags"] = ["year"]
-    config["custom_rules"] = [{"id": "year_in_date", "when": {"field": "year", "is_present": True},
-                              "field": "date", "template": {"operator": "contains", "pattern": "{year}"}}]
+    config["custom_rules"] = [
+        {
+            "id": "year_in_date",
+            "when": {"field": "year", "is_present": True},
+            "field": "date",
+            "template": {"operator": "contains", "pattern": "{year}"},
+        }
+    ]
     config_file.write_text(yaml.safe_dump(config))
     with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
         run_scan(tmp_path, config_file)
