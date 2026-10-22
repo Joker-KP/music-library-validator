@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Read MP3 ID3 `TCOM` as `composer`, matching FLAC `COMPOSER`, so composer
+  presence conditions and comment templates work for both formats. Parser version
+  5 refreshes older cached metadata once; later YAML edits reuse the cache.
 - Append `Parent folder` (`parent_folder`) to all catalog formats, showing the
   name of the directory one level above the album. Right-align folder size and
   center track count and issue count headers and values in the HTML catalog.

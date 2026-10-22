@@ -179,7 +179,9 @@ database. Unsupported future schema versions are refused.
 Parser version 3 refreshes older cached metadata once to include MP3 lyricist,
 original lyricist and compilation tags, and FLAC original-lyricist aliases.
 Parser version 4 adds MP3 stream bitrate for catalog quality and refreshes older
-entries once; subsequent scans reuse it. Parser version 2 introduced corrected
+entries once; subsequent scans reuse it. Parser version 5 adds MP3 `TCOM` as
+`composer`, matching FLAC `COMPOSER`, and refreshes older entries once so
+composer rules also work with existing libraries. Parser version 2 introduced corrected
 FLAC artwork dimensions. No database
 deletion or `--full-scan` is necessary; later unchanged
 scans use the cache normally. Install updated dependencies with

@@ -174,6 +174,25 @@ template:
 
 This is a YAML-only migration; metadata cache contents remain reusable.
 
+MP3 `TCOM` maps to `composer`, matching FLAC `COMPOSER`. Use `composer` in
+required tags, presence conditions and templates for both formats. Parser version
+5 refreshes older cached metadata once automatically; no full scan is needed.
+
+For example, require a composer credit only when the composer is present:
+
+```yaml
+custom_rules:
+  - id: comment_has_composer
+    when: {field: composer, is_present: true}
+    field: comment
+    template:
+      operator: contains
+      pattern: 'muzyka: {composer}'
+    severity: warning
+```
+
+The pattern is literal and case-sensitive: `muzykaa:` and `muzyka:` are different.
+
 MP3 `TEXT`, `TOLY`, `TCMP` map to normalized `lyricist`, `origlyricist`,
 `compilation`. FLAC fields use those names; `ORIGINALLYRICIST` and
 `ORIGINAL_LYRICIST` also alias to `origlyricist` when the canonical tag is absent.

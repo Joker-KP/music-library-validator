@@ -443,6 +443,59 @@ def test_flac_zero_picture_dimensions_refresh_old_cache(tmp_path, library, confi
         assert list(csv.DictReader(stream)) == report(tmp_path)["issues"]
 
 
+def test_composer_rule_mp3_flac_cache_upgrade_and_yaml_revalidation(tmp_path, custom_rule_library):
+    config_file = tmp_path / "composer.yaml"
+    custom = {
+        "id": "comment_has_composer",
+        "when": {"field": "composer", "is_present": True},
+        "field": "comment",
+        "template": {"operator": "contains", "pattern": "muzykaa: {composer}"},
+        "severity": "warning",
+    }
+    config = {"library_root": str(custom_rule_library), "custom_rules": [custom]}
+    config_file.write_text(yaml.safe_dump(config), encoding="utf-8")
+    before = signatures(custom_rule_library)
+    run_scan(tmp_path, config_file)
+
+    def composer_issues():
+        return [i for i in report(tmp_path)["issues"] if i["rule"] == custom["id"]]
+
+    found = composer_issues()
+    assert {Path(i["path"]).suffix for i in found} == {".mp3", ".flac"}
+    assert len(found) == 2
+    assert all(i["severity"] == "warning" and "muzykaa: Anna" in i["message"] for i in found)
+    with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert list(csv.DictReader(stream)) == report(tmp_path)["issues"]
+    assert (tmp_path / "reports/index.html").read_text().count("comment_has_composer") == 2
+    # Parser 4 omitted TCOM; upgrades must refresh unchanged files automatically.
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        for path, raw in con.execute("SELECT path,metadata_json FROM tracks").fetchall():
+            meta = json.loads(raw)
+            if path.endswith(".mp3"):
+                meta["tags"].pop("composer", None)
+            con.execute(
+                "UPDATE tracks SET metadata_json=?,parser_version=4 WHERE path=?",
+                (json.dumps(meta), path),
+            )
+    with patch.object(scanner, "read_metadata", wraps=scanner.read_metadata) as reader:
+        run_scan(tmp_path, config_file)
+    assert reader.call_count == 2
+    assert database.PARSER_VERSION > 4
+    assert len(composer_issues()) == 2
+    for record in records(tmp_path):
+        assert json.loads(record[2])["tags"]["composer"] == "Anna"
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        run_scan(tmp_path, config_file)
+        assert len(composer_issues()) == 2
+        custom["template"]["pattern"] = "muzyka: {composer}"
+        config_file.write_text(yaml.safe_dump(config), encoding="utf-8")
+        run_scan(tmp_path, config_file)
+        assert not composer_issues()
+    assert signatures(custom_rule_library) == before
+    with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert list(csv.DictReader(stream)) == report(tmp_path)["issues"]
+
+
 def test_conditional_rules_normalization_cache_and_reports(tmp_path, custom_rule_library):
     config_file = tmp_path / "custom.yaml"
     custom = {

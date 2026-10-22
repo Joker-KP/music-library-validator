@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from mutagen.flac import Picture
-from mutagen.id3 import ID3, TCMP, TDRC, TEXT, TOLY, TYER
+from mutagen.id3 import ID3, TCMP, TCOM, TDRC, TEXT, TOLY, TYER
 from PIL import Image
 
 from music_validator import metadata
@@ -128,6 +128,19 @@ def test_flac_reads_image_header_without_loading_pixels(monkeypatch):
     monkeypatch.setattr(Image.Image, "load", no_pixel_load)
     result = metadata.read_metadata(Path("01 - Song.flac"))
     assert result["artwork"][0]["width"] == result["artwork"][0]["height"] == 800
+
+
+@pytest.mark.parametrize("version", [3, 4])
+def test_mp3_composer_normalization(version):
+    tags = ID3()
+    tags.add(TCOM(encoding=3, text=["Łukasz Żółć"]))
+    source = BytesIO()
+    tags.save(source, v2_version=version)
+    original = source.getvalue()
+    source.seek(0)
+    result = metadata.read_metadata(Path("01 - Song.mp3"), fileobj=source)
+    assert result["tags"]["composer"] == "Łukasz Żółć"
+    assert source.getvalue() == original
 
 
 def test_mp3_lyricist_original_lyricist_and_compilation_normalization():

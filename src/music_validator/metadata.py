@@ -84,6 +84,7 @@ def read_metadata(path: Path, fileobj=None) -> dict:
             "TPOS": "discnumber",
             "TDRC": "date",
             "TYER": "date",
+            "TCOM": "composer",
             "TEXT": "lyricist",
             "TOLY": "origlyricist",
             "TCMP": "compilation",

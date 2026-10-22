@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 from mutagen.flac import FLAC
-from mutagen.id3 import COMM, ID3, TCMP, TEXT, TOLY
+from mutagen.id3 import COMM, ID3, TCMP, TCOM, TEXT, TOLY
 
 
 @pytest.fixture(autouse=True)
@@ -41,6 +41,7 @@ def custom_rule_library(tmp_path):
         source = BytesIO((Path(__file__).parent / "fixtures" / f"silence.{ext}").read_bytes())
         if ext == "mp3":
             tags = ID3(source)
+            tags.add(TCOM(encoding=3, text=["Anna"]))
             tags.add(TEXT(encoding=3, text=["Żaneta Nowak"]))
             tags.add(TOLY(encoding=3, text=["Jan Łódzki"]))
             tags.add(TCMP(encoding=3, text=["1"]))
@@ -56,6 +57,7 @@ def custom_rule_library(tmp_path):
             tags.save(source)
         else:
             audio = FLAC(source)
+            audio["composer"] = ["Anna"]
             audio["lyricist"] = ["Żaneta Nowak"]
             audio["originallyricist"] = ["Jan Łódzki"]
             audio["compilation"] = ["0"]

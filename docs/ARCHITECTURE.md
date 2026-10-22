@@ -77,6 +77,10 @@ This reuses the scanner's read-only file descriptor, without full decoding.
 Older parser versions refresh once; schema 1 and existing metadata rows are
 retained. Bitrate is technical metadata, separate from normalized tag strings.
 
+Parser version 5 maps MP3 ID3 `TCOM` to normalized `composer`, matching FLAC
+`COMPOSER`. Older cache entries refresh once automatically; the SQLite schema
+stays at 1. Later rule edits reuse the cached composer value.
+
 FLAC artwork dimensions come from the encoded image header read with Pillow,
 not the FLAC PICTURE block's declared width/height (which may be zero or stale).
 Only image headers are read; pixels are not loaded. Unreadable/unsupported headers

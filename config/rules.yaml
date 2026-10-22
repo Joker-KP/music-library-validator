@@ -55,9 +55,18 @@ custom_rules:
     field: comment
     template:
       operator: contains
-      pattern: 'słowa: {origlyricist}'
-    severity: warning
-
+      pattern: 'oryg. słowa: {origlyricist}'
+    severity: info
+  - id: improper_flac_tag
+    when:
+      format: flac
+      field: encodersettings
+      is_present: true
+    field: encodersettings
+    template:
+      operator: equals
+      pattern: ''
+    severity: info
 
 album_rules:
   consistent_album: true
