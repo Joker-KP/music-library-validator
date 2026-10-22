@@ -74,3 +74,15 @@ album_rules:
   unique_disc_track: true
   disc_number_mismatch: true
   consistent_artwork: true
+
+# Compare copies of the same title/artist in different album directories.
+# Missing credits differ from filled credits; surrounding whitespace is ignored.
+cross_album_rules:
+  enabled: true
+  severity: warning
+  # Normalized tag names to compare within each matched track group.
+  fields: [composer, lyricist, origlyricist]
+  # Names within each group are equivalent for this check only (case-sensitive).
+  artist_alias_groups:
+    - [Wolna Grupa Bukowina, Wojciech Bellon]
+    - [U Pana Boga za Piecem, Sylwek Szweda, Towarzystwo Wzajemnej Adoracji]

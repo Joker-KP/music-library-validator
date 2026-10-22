@@ -73,6 +73,12 @@ def test_defaults_and_explicit_disabling(tmp_path):
     assert config["required_tags"] == ["title", "artist", "album", "tracknumber", "comment"]
     assert config["artwork"]["required"] is True
     assert config["filename"]["allowed_chars"] == "[]0-9a-zA-Z -()"
+    assert config["cross_album_rules"] == {
+        "enabled": True,
+        "severity": "warning",
+        "fields": ["composer", "lyricist", "origlyricist"],
+        "artist_alias_groups": [],
+    }
     path.write_text("library_root: /x\nrequired_tags: []\nartwork: {required: false}\n")
     assert load_config(path)["required_tags"] == []
     assert load_config(path)["artwork"]["required"] is False
@@ -90,3 +96,60 @@ def test_duplicate_yaml_keys_rejected(tmp_path):
     path.write_text("library_root: /x\nartwork: {required: true, required: false}\n")
     with pytest.raises(ValueError, match="Duplicate"):
         load_config(path)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        None,
+        [],
+        {"unknown": True},
+        {"enabled": "yes"},
+        {"severity": "fatal"},
+        {"fields": None},
+        {"fields": "composer"},
+        {"fields": True},
+        {"fields": {}},
+        {"fields": [None]},
+        {"fields": [1]},
+        {"fields": ["Composer"]},
+        {"fields": [""]},
+        {"fields": [" composer "]},
+        {"fields": ["composer", "composer"]},
+        {"fields": ["composer); DROP TABLE tracks; --"]},
+        {"artist_alias_groups": None},
+        {"artist_alias_groups": "A"},
+        {"artist_alias_groups": ["A", "B"]},
+        {"artist_alias_groups": [[]]},
+        {"artist_alias_groups": [["A"]]},
+        {"artist_alias_groups": [["A", None]]},
+        {"artist_alias_groups": [["A", 1]]},
+        {"artist_alias_groups": [["A", " "]]},
+        {"artist_alias_groups": [["A", "A"]]},
+        {"artist_alias_groups": [["A", "B"], ["B", "C"]]},
+        {"artist_alias_groups": [[" A ", "B"], ["A", "C"]]},
+    ],
+)
+def test_invalid_cross_album_config_fails_before_outputs(tmp_path, options, capsys):
+    test_invalid_config_has_clear_cli_error(
+        tmp_path, {"library_root": "/x", "cross_album_rules": options}, capsys
+    )
+
+
+def test_cross_album_partial_settings_inherit_defaults(tmp_path):
+    path = tmp_path / "rules.yaml"
+    options = {"artist_alias_groups": [["Wolna Grupa Bukowina", "Wojciech Bellon"]]}
+    path.write_text(yaml.safe_dump({"library_root": "/x", "cross_album_rules": options}))
+    config = load_config(path)["cross_album_rules"]
+    assert config["enabled"] is True and config["severity"] == "warning"
+    assert config["fields"] == ["composer", "lyricist", "origlyricist"]
+    assert config["artist_alias_groups"] == options["artist_alias_groups"]
+    path.write_text("library_root: /x\ncross_album_rules: {enabled: false}\n")
+    assert load_config(path)["cross_album_rules"]["enabled"] is False
+
+
+@pytest.mark.parametrize("fields", [[], ["composer"], ["genre", "comment"]])
+def test_cross_album_fields_accept_normalized_names_and_empty_list(tmp_path, fields):
+    path = tmp_path / "rules.yaml"
+    path.write_text(yaml.safe_dump({"library_root": "/x", "cross_album_rules": {"fields": fields}}))
+    assert load_config(path)["cross_album_rules"]["fields"] == fields

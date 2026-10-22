@@ -14,7 +14,7 @@ import pytest
 import yaml
 from conftest import signatures
 from mutagen.flac import FLAC, Picture
-from mutagen.id3 import ID3, TDRC
+from mutagen.id3 import ID3, TALB, TCOM, TDRC, TEXT, TIT2, TPE1
 from PIL import Image
 
 from music_validator import cli, database, scanner
@@ -33,6 +33,118 @@ def records(tmp_path):
 
 def report(tmp_path):
     return json.loads((tmp_path / "reports/report.json").read_text())
+
+
+def test_cross_album_aliases_cached_rules_and_all_reports(tmp_path):
+    library = tmp_path / "music"
+    for album, disc, ext, artist, composer, original in [
+        ("A", 1, "mp3", "Wolna Grupa Bukowina", "Wojciech Bellon", ""),
+        ("A", 2, "flac", "Wolna Grupa Bukowina", "Wojciech Bellon", ""),
+        ("B", 1, "flac", "Wojciech Bellon", "<Other & Composer>", "Jan Łódzki"),
+        ("C", 1, "flac", "Unrelated", "Other", "Jan Łódzki"),
+    ]:
+        source = BytesIO((Path(__file__).parent / "fixtures" / f"silence.{ext}").read_bytes())
+        if ext == "mp3":
+            audio = ID3(source)
+            for frame, value in [
+                (TIT2, "Łódź"),
+                (TPE1, artist),
+                (TALB, album),
+                (TCOM, composer),
+                (TEXT, "Żaneta"),
+            ]:
+                audio.add(frame(encoding=3, text=[value]))
+            audio.save(source)
+        else:
+            audio = FLAC(source)
+            for key, value in {
+                "title": "Łódź",
+                "artist": artist,
+                "album": album,
+                "composer": composer,
+                "lyricist": "Żaneta",
+                "origlyricist": original,
+            }.items():
+                audio[key] = [value]
+            source.seek(0)
+            audio.save(source)
+        path = library / album / f"CD{disc}" / f"01 - Song.{ext}"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(source.getvalue())
+    before = signatures(library)
+    config_file = tmp_path / "cross-album.yaml"
+    config = {
+        "library_root": str(library),
+        "artwork": {"required": False},
+        "cross_album_rules": {"artist_alias_groups": []},
+    }
+
+    def scan_and_check(expected, severity="warning", fields=("composer", "origlyricist")):
+        config_file.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+        run_scan(tmp_path, config_file)
+        found = report(tmp_path)["issues"]
+        assert len(found) == expected
+        assert all(i["severity"] == severity for i in found)
+        with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+            assert list(csv.DictReader(stream)) == found
+        document = (tmp_path / "reports/index.html").read_text()
+        assert document.count("<tr>") - document.count("<thead>") == len(found)
+        if found:
+            assert {i["rule"] for i in found} == {"cross_album_" + field for field in fields}
+            assert "td:last-child{white-space:pre-wrap}" in document
+            assert all("\nThis track: " in i["message"] for i in found)
+            assert all("\nValues across albums:\n- " in i["message"] for i in found)
+            assert "<Other & Composer>" not in document
+            if "composer" in fields:
+                assert "&lt;Other &amp; Composer&gt;" in document
+            assert {Path(i["path"]).suffix for i in found} == {".mp3", ".flac"}
+        catalog = json.loads((tmp_path / "reports/catalog.json").read_text())["albums"]
+        assert len(catalog) == 3
+        assert [a["number_of_issues"] for a in catalog] == (
+            [2 * expected // 3, expected // 3, ""] if expected else [""] * 3
+        )
+        assert signatures(library) == before
+
+    scan_and_check(0)
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        options = config["cross_album_rules"]
+        options["artist_alias_groups"] = [["Wolna Grupa Bukowina", "Wojciech Bellon"]]
+        scan_and_check(6)
+        options["fields"] = ["composer"]
+        scan_and_check(3, fields=["composer"])
+        options["fields"] = ["album"]
+        scan_and_check(3, fields=["album"])
+        options["fields"] = []
+        scan_and_check(0)
+        options["fields"] = ["composer", "lyricist", "origlyricist"]
+        options["severity"] = "info"
+        scan_and_check(6, "info")
+        options["enabled"] = False
+        scan_and_check(0)
+        options["enabled"] = True
+        options["artist_alias_groups"] = []
+        scan_and_check(0)
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        assert con.execute("PRAGMA user_version").fetchone()[0] == database.SCHEMA_VERSION == 1
+        assert not con.execute(
+            "SELECT name FROM sqlite_master WHERE name='cross_album_tracks'"
+        ).fetchall()
+        assert con.execute("SELECT count(*) FROM tracks").fetchone()[0] == 4
+
+
+def test_cross_album_failure_rolls_back_cache_and_preserves_reports(tmp_path, config_file):
+    run_scan(tmp_path, config_file)
+    before = records(tmp_path)
+    current = (tmp_path / "reports/current").readlink()
+    with (
+        patch.object(cli, "validate_cross_album", side_effect=RuntimeError("cross-album failure")),
+        pytest.raises(RuntimeError, match="cross-album failure"),
+    ):
+        run_scan(tmp_path, config_file, full=True)
+    assert records(tmp_path) == before
+    assert (tmp_path / "reports/current").readlink() == current
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        assert con.execute("SELECT count(*) FROM scans").fetchone()[0] == 1
 
 
 def test_catalog_includes_clean_albums_discs_sizes_and_cache(tmp_path, library, config_file):

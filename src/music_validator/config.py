@@ -9,6 +9,7 @@ from string import Formatter
 import yaml
 
 from .characters import DEFAULT_ALLOWED_CHARS, allowed_characters
+from .cross_album import DEFAULT_FIELDS
 from .custom_rules import OPERATORS
 from .grouping import DEFAULT_DISC_PATTERN
 
@@ -23,6 +24,12 @@ DEFAULTS = {
         "allowed_chars": DEFAULT_ALLOWED_CHARS,
     },
     "custom_rules": [],
+    "cross_album_rules": {
+        "enabled": True,
+        "severity": "warning",
+        "fields": list(DEFAULT_FIELDS),
+        "artist_alias_groups": [],
+    },
     "album_rules": {
         "consistent_album": True,
         "consistent_albumartist": False,
@@ -138,6 +145,34 @@ def check_custom_template(rule):
             raise ValueError(f"Invalid custom_rules.template.pattern regex: {exc}") from exc
 
 
+def check_cross_album_rules(options):
+    if type(options["enabled"]) is not bool:
+        raise ValueError("cross_album_rules.enabled must be a boolean")
+    if options["severity"] not in ("info", "warning", "error"):
+        raise ValueError("cross_album_rules.severity must be info, warning or error")
+    fields = options["fields"]
+    if not isinstance(fields, list):
+        raise ValueError("cross_album_rules.fields must be a list")  # noqa: TRY004
+    for field in fields:
+        _name(field, "cross_album_rules.fields entry")
+    if len(fields) != len(set(fields)):
+        raise ValueError("cross_album_rules.fields must not contain duplicate names")
+    groups = options["artist_alias_groups"]
+    if not isinstance(groups, list):
+        raise ValueError("cross_album_rules.artist_alias_groups must be a list")  # noqa: TRY004
+    seen = set()
+    for group in groups:
+        if not isinstance(group, list) or len(group) < 2:
+            raise ValueError("Each artist alias group must be a list of at least two names")
+        for name in group:
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("Artist alias names must be nonblank strings")
+            name = name.strip()
+            if name in seen:
+                raise ValueError(f"Duplicate or overlapping artist alias name: {name!r}")
+            seen.add(name)
+
+
 def load_config(path: Path) -> dict:
     data = yaml.load(path.read_text(encoding="utf-8"), Loader=ConfigLoader)
     _object(data, set(DEFAULTS) | {"library_root"}, "configuration")
@@ -145,7 +180,7 @@ def load_config(path: Path) -> dict:
         raise ValueError("library_root must be a nonempty path string")
     config = deepcopy(DEFAULTS)
     for key, value in data.items():
-        if key in ("artwork", "filename", "album_rules"):
+        if key in ("artwork", "filename", "album_rules", "cross_album_rules"):
             _object(value, set(DEFAULTS[key]), key)
             config[key].update(value)
         else:
@@ -172,6 +207,7 @@ def load_config(path: Path) -> dict:
     for key, value in config["album_rules"].items():
         if type(value) is not bool:
             raise ValueError(f"album_rules.{key} must be a boolean")
+    check_cross_album_rules(config["cross_album_rules"])
     fc = config["filename"]
     _regex(fc["regex"], "filename.regex", nullable=True)
     allowed_characters(fc["allowed_chars"])

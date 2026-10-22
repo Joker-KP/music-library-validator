@@ -73,3 +73,34 @@ def test_future_schema_refused(tmp_path):
         con.execute("PRAGMA user_version=999")
     with pytest.raises(ValueError, match="schema"):
         database.connect(path)
+
+
+def test_cross_album_projection_sorts_literal_values_without_persistent_tables(tmp_path):
+    con = database.connect(tmp_path / "cache.sqlite")
+    artist = "Artist'); DROP TABLE tracks; --"
+    candidates = [
+        {
+            "title": title,
+            "artist": artist,
+            "album_dir": "/music/" + album,
+            "path": f"/music/{album}/01.flac",
+            "values": {"composer": "Łódź's Composer", "lyricist": "", "origlyricist": ""},
+        }
+        for title, album in [("Żółć", "B"), ("A", "B"), ("A", "A")]
+    ]
+    try:
+        found = list(database.iter_cross_album_rows(con, iter(candidates)))
+        assert found == [candidates[2], candidates[1], candidates[0]]
+        assert con.execute("SELECT count(*) FROM tracks").fetchone()[0] == 0
+        assert not con.execute(
+            "SELECT name FROM sqlite_master WHERE name='cross_album_tracks'"
+        ).fetchall()
+        assert (
+            con.execute(
+                "SELECT count(*) FROM sqlite_temp_master WHERE name='cross_album_tracks'"
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        con.rollback()
+        con.close()

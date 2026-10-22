@@ -106,3 +106,30 @@ def iter_rows(conn):
 
 def rows(conn):
     return list(iter_rows(conn))
+
+
+def iter_cross_album_rows(conn, candidates):
+    """Sort a temporary credit projection without changing the persistent schema.
+
+    The connection owns this table; it disappears on close, including on failure.
+    Input contains normalized identity strings and a mapping of compared values.
+    """
+    conn.execute("""CREATE TEMP TABLE cross_album_tracks (
+        title TEXT NOT NULL, artist TEXT NOT NULL,
+        album_dir TEXT NOT NULL, path TEXT NOT NULL,
+        values_json TEXT NOT NULL
+    )""")
+    conn.executemany(
+        """INSERT INTO cross_album_tracks VALUES
+        (:title,:artist,:album_dir,:path,:values_json)""",
+        (
+            {**candidate, "values_json": json.dumps(candidate["values"], ensure_ascii=False)}
+            for candidate in candidates
+        ),
+    )
+    for row in conn.execute(
+        "SELECT * FROM cross_album_tracks ORDER BY title,artist,album_dir,path"
+    ):
+        result = dict(row)
+        result["values"] = json.loads(result.pop("values_json"))
+        yield result

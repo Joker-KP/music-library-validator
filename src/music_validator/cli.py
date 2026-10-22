@@ -12,6 +12,7 @@ import yaml
 from . import database, scanner
 from .catalog import summarize_album
 from .config import load_config
+from .cross_album import artist_aliases, credit_candidate, validate_cross_album
 from .grouping import disc_number
 from .metadata import normalize_date_tags
 from .reports import write_reports
@@ -55,6 +56,23 @@ def run(config_path: Path, db: Path, reports: Path, full: bool = False):
                 rows = list(album_rows)
                 issues.extend(validate(rows, config))
                 catalog.append(summarize_album(rows, result.folder_sizes[album]))
+            cross_album = config["cross_album_rules"]
+            fields = cross_album["fields"]
+            if cross_album["enabled"] and fields:
+                aliases = artist_aliases(cross_album["artist_alias_groups"])
+                candidates = (
+                    candidate
+                    for row in normalized_rows()
+                    if (candidate := credit_candidate(row, aliases, fields)) is not None
+                )
+                issues.extend(
+                    validate_cross_album(
+                        database.iter_cross_album_rows(con, candidates),
+                        cross_album["severity"],
+                        fields,
+                    )
+                )
+            issues.sort(key=lambda item: (item["album"], item["path"], item["rule"]))
             count = con.execute("SELECT count(*) FROM tracks").fetchone()[0]
             outstanding = con.execute(
                 "SELECT count(*) FROM tracks WHERE error IS NOT NULL"

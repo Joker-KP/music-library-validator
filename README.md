@@ -124,6 +124,44 @@ Examples of grouping:
 /music/Artist/Album/Bonus/01 - Demo.mp3      -> /music/Artist/Album/Bonus (separate)
 ```
 
+## Cross-album credit consistency
+
+Tracks with the same `title` and `artist` in different album directories are
+checked for consistent `composer`, `lyricist` and `origlyricist` values. This is
+enabled by default. Each conflicting field produces a warning for every matched
+copy, with the current value on its own line and each compared value/reference
+path on a separate line. These issues appear
+under the affected albums in HTML/CSV/JSON and count toward catalog issue totals.
+
+Use artist alias groups when a band or performer has multiple names:
+
+```yaml
+cross_album_rules:
+  enabled: true
+  severity: warning
+  fields: [composer, lyricist, origlyricist]
+  artist_alias_groups:
+    - [Wolna Grupa Bukowina, Wojciech Bellon]
+    - [U Pana Boga za Piecem, Sylwek Szweda, Towarzstwo Wzajemnej Adoracji]
+```
+
+Names in one group are equivalent for this check; other rules and original tags
+keep their existing values. Groups must not overlap. Matching and credit
+comparisons trim surrounding whitespace and remain case-sensitive. Missing and
+blank credits are equivalent, but differ from filled credits. Read errors and
+tracks without a nonblank title/artist are skipped. Copies confined to one album
+are outside this check, including its collapsed disc folders.
+
+Set `fields` to the normalized tag names you want compared; the list replaces
+the default three fields, so `fields: [composer]` checks only composer.
+Other exposed tags, such as `genre` or `comment`, can be included. A field must
+already be exposed by the metadata reader; this setting does not add ID3 frame
+support. Use `fields: []` or `enabled: false` to disable comparisons, or
+`severity: info` / `error` to change the severity.
+Field-list and alias/rule edits revalidate the SQLite metadata cache without audio
+rereads; this feature needs no schema migration or parser-version refresh.
+The existing first-value policy for multi-valued tags still applies.
+
 ## Implementation status
 
 Implemented: recursive file enumeration, ID3 and FLAC Vorbis Comment normalization via Mutagen, MP3 APIC / FLAC Picture detection, album directory grouping with disc suffixes, disc-folder fallback, missing field / cover / filename regex and allowed-character checks, optional filename template and conditional custom rules, lyricist/original-lyricist/compilation normalization, album/title and albumartist consistency options, duplicate `(disc, track)` detection, optional cover-hash consistency, SQLite incremental cache, read errors, and issue/catalog reports in HTML, CSV and JSON.

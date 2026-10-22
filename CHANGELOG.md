@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **New default validation:** compare `composer`, `lyricist` and `origlyricist`
+  for the same title/artist across distinct albums. Emit per-copy, per-field
+  `cross_album_*` warnings with conflicting values and reference paths; missing
+  versus filled credits is a conflict. Include warnings in all issue reports and
+  catalog counts. Configure `cross_album_rules.enabled`, `severity`, `fields`
+  and `artist_alias_groups`; aliases apply only to this check. The field list
+  defaults to the three credits and accepts other normalized tags; `[]` skips
+  comparisons. Field-list changes revalidate cached metadata. Use a temporary SQLite
+  projection without persistent schema changes or forced audio rereads.
+- Display cross-album details on separate lines for the current value and each
+  compared value/reference path. Preserve line breaks in HTML and the same
+  multiline message in CSV/JSON.
 - Read MP3 ID3 `TCOM` as `composer`, matching FLAC `COMPOSER`, so composer
   presence conditions and comment templates work for both formats. Parser version
   5 refreshes older cached metadata once; later YAML edits reuse the cache.

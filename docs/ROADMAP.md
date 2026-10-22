@@ -19,6 +19,9 @@
 
 ## P1 — quality features
 
+- Completed: cross-album composer, lyricist and original-lyricist consistency
+  for matching title/artist pairs, configurable artist alias groups and cached
+  revalidation, with conflicts included in issue reports and catalog counts.
 - Completed: all-album catalog in HTML/CSV/JSON with worst-track quality,
   recursive folder size and track count, published alongside issue reports.
 - Completed: normalized `year`/`date` support for required fields and templates,

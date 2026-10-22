@@ -200,6 +200,64 @@ The existing first-value policy still applies to multi-valued tags. Parser
 version 3 refreshes older metadata once to expose the added MP3 tags/FLAC aliases;
 subsequent YAML-only rule edits reuse cached metadata.
 
+## Cross-album credit consistency
+
+`cross_album_rules` is a mapping with these optional settings:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Check matching tracks across distinct album directories. |
+| `severity` | `warning` | Severity for these issues: `info`, `warning`, or `error`. |
+| `fields` | `[composer, lyricist, origlyricist]` | Normalized tag names to compare; `[]` skips comparisons. |
+| `artist_alias_groups` | `[]` | A list of lists of equivalent artist names. |
+
+For example:
+
+```yaml
+cross_album_rules:
+  fields: [composer, lyricist, origlyricist]
+  artist_alias_groups:
+    - [Wolna Grupa Bukowina, Wojciech Bellon]
+    - [U Pana Boga za Piecem, Sylwek Szweda, Towarzstwo Wzajemnej Adoracji]
+```
+
+Each group requires at least two nonblank strings. Duplicate names, including
+overlaps between groups after trimming, are configuration errors before output
+writes. Unknown options, null sections, nonboolean `enabled` and invalid
+severities are rejected. The first name is the group's identity in diagnostics;
+all group members match equally, without changing metadata or other validators.
+
+The matching key is the pair of trimmed title and trimmed artist, with aliases
+applied to the artist only. Comparisons are case-sensitive and preserve internal
+whitespace, punctuation and Unicode text. There is no fuzzy title matching or
+inference from album artist, composer, filenames or live-version labels.
+Unreadable tracks and missing/blank title or artist are excluded.
+
+When a key occurs in at least two album directories, compare the trimmed values
+of every configured `fields` entry independently. The list replaces the default
+`composer`, `lyricist` and `origlyricist` selection. Entries must be unique
+lowercase field identifiers, as for `required_tags`; nulls, wrong types and invalid
+identifiers are configuration errors before writes. Other normalized tags such as
+`genre`, `comment` or `album` are allowed. Fields refer to metadata tag values,
+not filesystem properties or inferred identities. Selecting `artist` compares
+original artist tag values even when aliases made their identities equivalent.
+This setting does not add support for reading new ID3 frames. Missing, empty
+and whitespace-only values all compare as missing; missing versus filled is a
+conflict. The first-value metadata policy still applies. Copies only within one
+album, including its disc folders, do not trigger this rule.
+
+Each differing field emits one issue for every matching copy, including copies
+with the most common value. Rule IDs follow `cross_album_<field>`, e.g.
+`cross_album_composer`, `cross_album_lyricist`, or `cross_album_genre`. Diagnostics include
+the key, that copy's value, all distinct values and a representative file path
+for each value. The current value has its own line, followed by a separate line
+for each compared value/reference path. HTML preserves these line breaks; CSV
+and JSON carry the same multiline message. No copy is assumed authoritative. Issues use the existing
+album/path/rule/severity/message schema in all reports, and count in the catalog.
+
+Field lists, aliases, severity and enablement re-evaluate cached metadata on every scan.
+No schema change, audio read or parser-version bump is required by this feature.
+
 ## Intended future rule syntax
 
 - Richer Boolean conditions (OR/negation) and numeric comparisons

@@ -10,6 +10,8 @@ and `reports.py` separate configuration, output safety, discovery, normalization
 persistence, rules and rendering. `characters.py` shares the safe filename
 allowlist grammar between configuration validation and rules. `custom_rules.py`
 evaluates declarative conditions and template comparisons on normalized metadata.
+`cross_album.py` projects matching identities and credit strings from normalized
+metadata and compares one identity group at a time, independently of Mutagen.
 `catalog.py` summarizes each album's metadata and rounds recursive folder sizes
 to whole MB. Rendering adds consecutive row numbers and per-album counts from
 the emitted validation issues, leaving zero counts blank in all catalog formats.
@@ -27,9 +29,19 @@ relative to read-only directory descriptors with `O_NOFOLLOW`. Traversal errors
 propagate. Discovery also totals recursive regular-file sizes in postorder,
 retaining only totals for detected album directories; links are excluded. This
 uses the same traversal, without rereading audio or opening sidecar contents.
-Validation and catalog aggregation load one album at a time; retained summaries
-scale with album count, and issue lists/reports scale with issue count. This is
-not a full audio decoder/integrity check.
+Album validation and catalog aggregation load one album at a time. When enabled,
+cross-album validation makes a second pass over cached normalized metadata,
+projecting only title, canonical artist, album/path and configured tag values
+into a connection-local temporary SQLite table. SQLite sorts this projection;
+Python retains only one matching identity group at a time, rather than all
+tracks' metadata. The temporary table is discarded on connection close and
+changes no persistent schema. Compared values are stored in a JSON mapping,
+separately from identity/reference fields, so tag names never become SQL column
+names or overwrite reference paths. Field-list, rule and alias changes never
+force audio rereads. An empty field list skips this projection and comparison.
+Retained summaries scale with album count, issue lists/reports with issue count,
+and cross-album working memory with the largest matching group. This is not a
+full audio decoder/integrity check.
 
 Schema 1 migrates the unversioned baseline without dropping metadata and adds
 `parser_version`, `last_seen_scan` and `cache_settings`. Legacy parser version zero
@@ -114,6 +126,11 @@ rendered-regex lengths are bounded at 4096. No `eval`, `exec` or arbitrary
 expression language is used, and custom rules never access Mutagen objects.
 
 ## Operational model
+
+Cross-album credit conflicts are evaluated inside the scan transaction, before
+cache commit and report publication. They are sorted together with track/album
+issues by album, path and rule. Failures roll back the scan and preserve prior
+reports; catalog issue counts include these conflicts.
 
 Short-lived Linux process invoked with Docker Compose. Mount `/music:ro`, writable
 `/data` and `/reports`. All output paths are checked before writes; symlink output
