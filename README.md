@@ -216,8 +216,8 @@ and keep the generation referenced by `current`. This retention uses disk space.
 
 Every scan also creates a standalone `reports/catalog.html` table with these
 columns: No, album artist, year, album, quality, folder size (MB), total number of
-tracks, Number of issues. Disc folders share one album row, using the same
-directory identity as validation. Rows are ordered by album directory,
+tracks, Number of issues, Parent folder. Disc folders share one album row,
+using the same directory identity as validation. Rows are ordered by album directory,
 independently of tag values.
 
 - `No` numbers album rows consecutively from 1 in that directory order.
@@ -244,9 +244,14 @@ independently of tag values.
 - Number of issues counts all emitted validation issues for that album, across
   all tracks and severities, including album-level issues. It is blank when none
   are present and updates when rules change, even when audio metadata is cached.
+- Parent folder is only the name of the directory one level above the album
+  directory, after disc folders have been collapsed (e.g. `Artist` for
+  `/music/Artist/Album/CD1`). In HTML, folder size headers and values are
+  right-aligned; track count and issue count headers and values are centered.
 
-`catalog.csv` uses eight columns: `no`, `album_artist`, `year`, `album`, `quality`,
-`folder_size_mb`, `total_tracks`, `number_of_issues`. `catalog.json` contains
+`catalog.csv` uses nine columns: `no`, `album_artist`, `year`, `album`, `quality`,
+`folder_size_mb`, `total_tracks`, `number_of_issues`, `parent_folder`.
+`catalog.json` contains
 `generated_at` and an `albums` array with the same fields (integer row number, size and counts;
 `number_of_issues` is an empty string when none), plus `album_dir` for
 unambiguous directory identity. The HTML exposes the directory in each row's

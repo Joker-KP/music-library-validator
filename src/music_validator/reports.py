@@ -17,7 +17,12 @@ from .safety import REPORT_FILES, check_report_directory
 def _render_catalog(dest: Path, albums: list[dict], generated_at: str, issues: list):
     issue_counts = Counter(item["album"] for item in issues)
     albums = [
-        {"no": number, **album, "number_of_issues": issue_counts[album["album_dir"]] or ""}
+        {
+            "no": number,
+            **album,
+            "number_of_issues": issue_counts[album["album_dir"]] or "",
+            "parent_folder": Path(album["album_dir"]).parent.name,
+        }
         for number, album in enumerate(albums, start=1)
     ]
     (dest / "catalog.json").write_text(
@@ -30,10 +35,20 @@ def _render_catalog(dest: Path, albums: list[dict], generated_at: str, issues: l
         )
         writer.writeheader()
         writer.writerows(albums)
-    headers = "".join(f'<th scope="col">{label}</th>' for _, label in CATALOG_COLUMNS)
+    alignment = {
+        "folder_size_mb": ' class="numeric"',
+        "total_tracks": ' class="centered"',
+        "number_of_issues": ' class="centered"',
+    }
+    headers = "".join(
+        f'<th scope="col"{alignment.get(key, "")}>{label}</th>' for key, label in CATALOG_COLUMNS
+    )
     rows = []
     for album in albums:
-        cells = "".join(f"<td>{html.escape(str(album[key]))}</td>" for key, _ in CATALOG_COLUMNS)
+        cells = "".join(
+            f"<td{alignment.get(key, '')}>{html.escape(str(album[key]))}</td>"
+            for key, _ in CATALOG_COLUMNS
+        )
         rows.append(f'<tr title="{html.escape(album["album_dir"], quote=True)}">{cells}</tr>')
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -42,6 +57,8 @@ def _render_catalog(dest: Path, albums: list[dict], generated_at: str, issues: l
 body{{font:15px system-ui,sans-serif;margin:2rem;line-height:1.5}}
 table{{border-collapse:collapse;width:100%}}
 th,td{{padding:.5rem;border-bottom:1px solid #aaa;text-align:left;overflow-wrap:anywhere}}
+.numeric{{text-align:right}}
+.centered{{text-align:center}}
 .table{{overflow-x:auto}}
 </style></head><body><h1>Music library catalog</h1>
 <p>{len(albums)} albums · Generated {html.escape(generated_at)}</p>

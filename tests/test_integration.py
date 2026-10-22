@@ -67,6 +67,7 @@ def test_catalog_includes_clean_albums_discs_sizes_and_cache(tmp_path, library, 
     assert len(catalog["albums"]) == 1
     row = catalog["albums"][0]
     assert row["album_dir"] == str(album)
+    assert row["parent_folder"] == album.parent.name
     assert row["no"] == 1
     assert row["number_of_issues"] == ""
     assert row["total_tracks"] == 2
@@ -152,7 +153,7 @@ def test_empty_library_has_empty_catalog(tmp_path):
     assert "No albums found" in (tmp_path / "reports/catalog.html").read_text()
     with (tmp_path / "reports/catalog.csv").open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
-        assert len(reader.fieldnames) == 8
+        assert len(reader.fieldnames) == 9
         assert list(reader) == []
 
 

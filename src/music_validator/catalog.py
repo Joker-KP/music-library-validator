@@ -11,6 +11,7 @@ CATALOG_COLUMNS = (
     ("folder_size_mb", "Folder size (MB)"),
     ("total_tracks", "Total number of tracks"),
     ("number_of_issues", "Number of issues"),
+    ("parent_folder", "Parent folder"),
 )
 
 

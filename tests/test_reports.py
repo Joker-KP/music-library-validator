@@ -44,7 +44,7 @@ def test_catalog_failure_preserves_all_six_outputs(tmp_path, filename):
 def test_catalog_html_escapes_metadata_and_folder_attributes(tmp_path):
     attack = '<script>alert("x")</script>'
     row = {
-        "album_dir": '" onmouseover="alert(1)',
+        "album_dir": '/music/<script>parent</script>/" onmouseover="alert(1)',
         "album_artist": attack,
         "year": "2001",
         "album": "Żółć & Łódź",
@@ -57,10 +57,15 @@ def test_catalog_html_escapes_metadata_and_folder_attributes(tmp_path):
     assert attack not in document
     assert "&lt;script&gt;" in document
     assert "Żółć &amp; Łódź" in document
-    assert 'title="&quot; onmouseover=&quot;alert(1)"' in document
-    assert document.count('<th scope="col">') == 8
+    assert (
+        'title="/music/&lt;script&gt;parent&lt;/script&gt;/&quot; onmouseover=&quot;alert(1)"'
+        in document
+    )
+    assert "<td>script&gt;</td>" in document
+    assert "<script>parent</script>" not in document
+    assert document.count('<th scope="col"') == 9
     assert json.loads((tmp_path / "catalog.json").read_text())["albums"] == [
-        {"no": 1, **row, "number_of_issues": ""}
+        {"no": 1, **row, "number_of_issues": "", "parent_folder": "script>"}
     ]
 
 
@@ -83,6 +88,7 @@ def test_catalog_numbers_and_issue_counts_agree_across_formats(tmp_path):
     albums = json.loads((tmp_path / "catalog.json").read_text())["albums"]
     assert [album["no"] for album in albums] == [1, 2, 3]
     assert [album["number_of_issues"] for album in albums] == [2, "", 1]
+    assert [album["parent_folder"] for album in albums] == ["<b>A<", "music", "music"]
     with (tmp_path / "catalog.csv").open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         assert reader.fieldnames == [
@@ -94,6 +100,7 @@ def test_catalog_numbers_and_issue_counts_agree_across_formats(tmp_path):
             "folder_size_mb",
             "total_tracks",
             "number_of_issues",
+            "parent_folder",
         ]
         assert list(reader) == [
             {key: str(value) for key, value in album.items() if key != "album_dir"}
@@ -101,10 +108,22 @@ def test_catalog_numbers_and_issue_counts_agree_across_formats(tmp_path):
         ]
     document = (tmp_path / "catalog.html").read_text()
     assert '<thead><tr><th scope="col">No</th>' in document
-    assert '<th scope="col">Number of issues</th></tr></thead>' in document
-    for number, issue_count in ((1, "2"), (2, ""), (3, "1")):
+    assert '<th scope="col">Parent folder</th></tr></thead>' in document
+    assert ".numeric{text-align:right}" in document
+    assert '<th scope="col" class="numeric">Folder size (MB)</th>' in document
+    assert ".centered{text-align:center}" in document
+    for label in ("Total number of tracks", "Number of issues"):
+        assert f'<th scope="col" class="centered">{label}</th>' in document
+    for number, issue_count, parent in (
+        (1, "2", "&lt;b&gt;A&lt;"),
+        (2, "", "music"),
+        (3, "1", "music"),
+    ):
         assert f"<td>{number}</td><td>Artist</td>" in document
-        assert f"<td>2</td><td>1</td><td>{issue_count}</td></tr>" in document
+        assert (
+            '<td class="numeric">2</td><td class="centered">1</td>'
+            f'<td class="centered">{issue_count}</td><td>{parent}</td></tr>'
+        ) in document
     assert all("no" not in row and "number_of_issues" not in row for row in rows)
 
 

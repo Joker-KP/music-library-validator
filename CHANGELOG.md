@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Append `Parent folder` (`parent_folder`) to all catalog formats, showing the
+  name of the directory one level above the album. Right-align folder size and
+  center track count and issue count headers and values in the HTML catalog.
 - Add a first `No` column and last `Number of issues` column to the catalog,
   numbering albums from 1 and leaving zero issue counts blank. Round folder
   sizes to whole MB. Apply the same fields to HTML, CSV and JSON exports
