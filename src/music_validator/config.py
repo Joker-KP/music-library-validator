@@ -25,6 +25,12 @@ DEFAULTS = {
         "allowed_chars": DEFAULT_ALLOWED_CHARS,
     },
     "custom_rules": [],
+    "audio_integrity": {
+        "enabled": False,
+        "flac": {"native_test": True},
+        "mp3": {"structure_check": True, "decode_check": True},
+        "timeout_seconds": 300,
+    },
     "audio_identity_rules": {
         "enabled": False,
         "fields": ["title", "artist", "composer"],
@@ -212,8 +218,32 @@ def check_audio_identity_rules(options):
             raise ValueError(f"audio_identity_rules.matching.{name} must be {bounds}")
 
 
+def check_audio_integrity(options):
+    switches = [("enabled", options["enabled"])]
+    switches.extend(
+        (f"{section}.{name}", value)
+        for section in ("flac", "mp3")
+        for name, value in options[section].items()
+    )
+    for name, value in switches:
+        if type(value) is not bool:
+            raise ValueError(f"audio_integrity.{name} must be a boolean")
+    timeout = options["timeout_seconds"]
+    try:
+        valid = type(timeout) in (int, float) and math.isfinite(timeout) and timeout > 0
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise ValueError("audio_integrity.timeout_seconds must be a finite positive number")
+
+
 def load_config(path: Path) -> dict:
     data = yaml.load(path.read_text(encoding="utf-8"), Loader=ConfigLoader)
+    return validate_config(data)
+
+
+def validate_config(data) -> dict:
+    """Build and validate a configuration, also reusable for inherited patches."""
     _object(data, set(DEFAULTS) | {"library_root"}, "configuration")
     if not isinstance(data.get("library_root"), str) or not data["library_root"].strip():
         raise ValueError("library_root must be a nonempty path string")
@@ -225,11 +255,14 @@ def load_config(path: Path) -> dict:
             "album_rules",
             "cross_album_rules",
             "audio_identity_rules",
+            "audio_integrity",
         ):
             _object(value, set(DEFAULTS[key]), key)
             for option, setting in value.items():
-                if key == "audio_identity_rules" and option == "matching":
-                    _object(setting, set(DEFAULTS[key][option]), "audio_identity_rules.matching")
+                if (key == "audio_identity_rules" and option == "matching") or (
+                    key == "audio_integrity" and option in ("flac", "mp3")
+                ):
+                    _object(setting, set(DEFAULTS[key][option]), f"{key}.{option}")
                     config[key][option].update(setting)
                 else:
                     config[key][option] = setting
@@ -259,6 +292,7 @@ def load_config(path: Path) -> dict:
             raise ValueError(f"album_rules.{key} must be a boolean")
     check_cross_album_rules(config["cross_album_rules"])
     check_audio_identity_rules(config["audio_identity_rules"])
+    check_audio_integrity(config["audio_integrity"])
     fc = config["filename"]
     _regex(fc["regex"], "filename.regex", nullable=True)
     allowed_characters(fc["allowed_chars"])

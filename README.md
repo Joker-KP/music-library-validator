@@ -16,8 +16,10 @@ python -m pytest -q
 ## Scan progress
 
 Every scan first walks the directory tree to count supported audio files, without
-opening audio, reading tags, decoding or changing the cache. A second filesystem
-pass processes metadata and, when enabled, fingerprints together. Unchanged cached
+opening audio, reading tags, decoding or changing the cache. This pass also reads
+and validates directory-specific `rules.yaml` patches before creating writable
+outputs. A second filesystem
+pass processes metadata and, when enabled, integrity checks and fingerprints together. Unchanged cached
 tracks count toward progress because they are still checked and revalidated.
 
 Progress appears on stderr with the file count, percentage, elapsed time and an
@@ -58,8 +60,8 @@ descriptors, `O_NOFOLLOW` and `flock`. Keep database and report directories owne
 by the scanning user and outside the music library. Output directories, SQLite
 files/sidecars and lock files must not be symlinks; database files must have one
 hard link. The report directory must support symbolic links and atomic rename.
-Overlapping scans using either the same database or the same report directory
-fail immediately with exit code 2.
+After read-only preflight, scans using either an occupied database or an occupied
+report directory fail at lock acquisition with exit code 2.
 
 ## Agreed requirements & decisions
 
@@ -153,6 +155,43 @@ Examples of grouping:
 /music/Artist/Album/Bonus/01 - Demo.mp3      -> /music/Artist/Album/Bonus (separate)
 ```
 
+## Folder-specific rules
+
+Place a UTF-8 `rules.yaml` inside the library to patch checks for that directory
+and all descendants. Patches accumulate from `/music` toward each track; deeper
+patches override only supplied settings, and sibling folders stay independent.
+Directories without audio can provide patches for albums below them.
+
+```yaml
+# /music/Artist/Album/rules.yaml
+added_required_tags: [composer]
+removed_required_tags: [year]
+removed_custom_rules: [comment_has_origlyricist]
+artwork:
+  required: false
+album_rules:
+  consistent_artwork: false
+```
+
+`added_custom_rules` accepts complete definitions using the main `custom_rules`
+syntax. To replace an inherited rule, remove and add its ID in the same patch.
+`artwork` and `album_rules` override individual keys; omitted keys stay inherited.
+Optional artwork still has its dimensions checked when present: set both
+`min_width: null` and `min_height: null` to disable dimension checks too.
+
+Track settings can differ between CD1/CD2. Album checks always use settings at
+the canonical album directory and compare all its discs; `album_rules` inside a
+collapsed disc directory is rejected with the proper album location.
+Filename, cross-album, integrity and identity settings remain global. Dedicated
+audio modes validate local YAML but skip its metadata checks as usual.
+
+Local edits, additions and deletions revalidate cached metadata without rereading
+unchanged audio. Invalid patches identify their source file and fail before
+cache/report writes. Detected mid-scan changes abort and preserve previous reports.
+No audio, database-schema or Compose mount changes are needed.
+See [the full merge rules](docs/RULES.md#folder-specific-rule-patches) and
+[example patch](config/local-rules.example.yaml).
+
 ## Cross-album credit consistency
 
 Tracks with the same `title` and `artist` in different album directories are
@@ -197,7 +236,148 @@ Audio-based tag consistency is also available as an opt-in check; see below.
 
 Implemented: recursive file enumeration, ID3 and FLAC Vorbis Comment normalization via Mutagen, MP3 APIC / FLAC Picture detection, album directory grouping with disc suffixes, disc-folder fallback, missing field / cover / filename regex and allowed-character checks, optional filename template and conditional custom rules, lyricist/original-lyricist/compilation normalization, album/title and albumartist consistency options, duplicate `(disc, track)` detection, optional cover-hash consistency, SQLite incremental cache, read errors, and issue/catalog reports in HTML, CSV and JSON.
 
-Not implemented yet: MP3 cover image dimension measurement; FLAC stream integrity check (`flac -t`); cryptographic audio checksums; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; a persistent web UI; reproducible locked dependencies; structured logging and performance benchmarks.
+Not implemented yet: MP3 cover image dimension measurement; externally supplied audio checksum manifests; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; a persistent web UI; reproducible locked dependencies; structured logging and performance benchmarks.
+
+## Audio integrity (optional)
+
+Enable full-stream checks separately from metadata validation and audio matching:
+
+```yaml
+audio_integrity:
+  enabled: true                 # Default: false
+  flac:
+    native_test: true
+  mp3:
+    structure_check: true
+    decode_check: true
+  timeout_seconds: 300          # Positive, finite deadline per tool/file
+```
+
+On Ubuntu install `sudo apt-get install flac mp3val ffmpeg`; the Docker image
+includes all three. Only tools selected for configured extensions are required.
+Missing/nonfunctional tools fail before cache/report output initialization.
+
+FLAC runs `flac --test --silent`, decoding the complete stream, checking frame
+integrity and comparing decoded audio with its stored MD5 when available. A missing
+MD5 produces `flac_checksum_unavailable` (warning), not a corruption error. A
+mismatch produces `flac_checksum_mismatch` (error). See the
+[FLAC test-mode documentation](https://xiph.org/flac/documentation_tools_flac.html).
+
+MP3 runs MP3val in scan mode and FFmpeg with `-xerror`, decoding only the first
+audio stream to a null output; embedded artwork is excluded. MP3val warnings such
+as resynchronization, junk and possible truncation become `mp3_structure_warning`.
+Possible truncation remains ambiguous: the tool can also be seeing trailing junk.
+Invalid MPEG format is `mp3_structure_error`; confirmed decoder failures are
+`audio_decode_error` (errors). MP3val's missing-tag warning is left to metadata
+rules. Duration estimation alone is not an integrity issue. Other decoder warnings
+remain `audio_integrity_warning`. MP3val checks frame structure, not the encoded
+audio inside each frame, which is why both MP3 checks are recommended. See the
+[MP3val manual](https://mp3val.sourceforge.net/docs/manual.html).
+
+Timeouts, crashes, I/O failures, unexpected tool failures and excessive diagnostics
+become `audio_integrity_incomplete` (warning), indicating no completed verdict.
+Incomplete checks retry next scan. All findings appear in the same album-oriented
+HTML/CSV/JSON reports and catalog issue counts as tag issues. Successful metadata
+parsing and fingerprinting alone still do not establish integrity. Confirmed
+integrity errors exclude a track from audio matching; warnings alone do not.
+
+Checks use verified read-only file descriptors and never enable repair options,
+create decoded audio, edit tags or alter timestamps. Integrity work runs during
+the second filesystem pass, before advancing that file's progress. Fingerprinting
+uses a separate decoder, so enabling both features adds CPU and I/O work.
+
+SQLite schema 3 adds independent results per path/tool, retaining metadata and
+fingerprint caches. Unchanged completed results, including media errors, are
+reused; enabling another tool runs only the missing checks. File signatures,
+tool/profile version changes and `--full-scan` invalidate affected results.
+Changing tag rules or the timeout does not invalidate completed integrity results.
+Disabled checks do not contribute findings. Removed/changed files prune stale
+integrity results even when checking is disabled. Force only integrity checks with:
+
+```bash
+music-validator scan --config config/rules.yaml --db data/library.sqlite --reports reports --recheck-integrity
+# Docker, using the same enabled configuration:
+docker compose run --rm music-validator scan --config /config/rules.yaml --db /data/library.sqlite --reports /reports --recheck-integrity
+```
+
+The flag requires `audio_integrity.enabled: true`. Schedule occasional forced
+checks to detect storage damage that preserves file size and nanosecond mtime;
+ordinary incremental scans cannot detect such changes. Passing checks cannot
+prove a recording is complete, audibly pristine or identical to an external master;
+MP3 has no universally available whole-audio checksum, and missing complete frames
+may still leave a decodable stream.
+
+## Dedicated audio analyses
+
+Run just one audio analysis without editing YAML enable settings:
+
+```bash
+music-validator scan --config config/rules.yaml --db data/library.sqlite --reports reports --audio-integrity-only
+music-validator scan --config config/rules.yaml --db data/library.sqlite --reports reports --audio-identity-only
+```
+
+The flags are mutually exclusive. Each enables its feature for this invocation
+and disables the other feature. Detailed YAML settings still apply: integrity tool
+choices/timeouts and identity fields/severity/matching thresholds. A dedicated
+integrity invocation with no applicable checks, or identity with `fields: []`,
+fails before creating outputs. YAML itself is never rewritten. Configuration is
+still validated in full, including sections unrelated to the selected mode.
+
+Integrity-only performs discovery and selected stream checks without parsing tags,
+inspecting artwork, running metadata rules, fingerprinting or creating an album
+catalog. Identity-only runs fingerprinting/matching and configured tag comparisons;
+it reads metadata only for new, changed, failed or outdated cached entries, using
+the existing metadata reader. It skips integrity tools and unrelated validation
+rules/catalog generation. Matching file-signature cached integrity errors exclude
+known-bad tracks and produce `audio_identity_skipped_integrity` warnings with
+per-track reasons; old-signature failures are ignored. Recheck integrity to
+reassess exclusions. Cached integrity warnings alone do not exclude tracks.
+
+Both modes keep the count-first pass, processing progress and incremental cache.
+They share the same SQLite database, so later normal scans can reuse their work;
+the database lock rejects overlapping modes. Directory-based album grouping,
+read-only music access and output-path checks apply to every mode.
+
+Each dedicated run updates only its own report family:
+
+```text
+reports/index.html                   # Normal configured audit (+ issue exports/catalog)
+reports/integrity-report/index.html   # Integrity only
+reports/identity-report/index.html    # Identity only
+```
+
+Each dedicated directory has `issues.csv`, `report.json`, its own `current` link
+and immutable generations. The normal audit and catalog are preserved, as is the
+other dedicated report. Specialist HTML/JSON includes effective settings and
+coverage statistics. Integrity lists per-file/tool statuses, last check times,
+cached/executed results and files without applicable checks. Identity lists track
+statuses, skipped/error reasons, fingerprint attempts/successes/reuse and all
+matched groups, including consistent groups, with minimum pair similarity/coverage,
+compared tag values and conflicting fields. CSV retains the standard issue columns;
+HTML/CSV/JSON contain the same issues. Per-track details stream from temporary
+SQLite tables rather than accumulating another full-library metadata list.
+
+Selecting an operation does not force it to reread unchanged audio. Add:
+
+```bash
+# Repeat selected integrity checks, retaining metadata and fingerprints:
+music-validator scan --config config/rules.yaml --db data/library.sqlite --reports reports --audio-integrity-only --recheck-integrity
+# Re-extract fingerprints, retaining current metadata:
+music-validator scan --config config/rules.yaml --db data/library.sqlite --reports reports --audio-identity-only --recheck-identity
+# Refresh all data needed by identity analysis, including metadata:
+music-validator scan --config config/rules.yaml --db data/library.sqlite --reports reports --audio-identity-only --full-scan
+```
+
+`--full-scan` refreshes only data needed by the selected mode: integrity-only still
+does not parse metadata. Recheck flags for an excluded operation are errors.
+Without an `--only` flag, the recheck flags require their feature to be enabled
+and retain the normal YAML-driven audit/report behavior. Matching always runs
+again with current settings, even when fingerprints are reused. Periodic forced
+integrity checks remain necessary for storage changes preserving size/mtime.
+
+For Docker, prepend `docker compose run --rm music-validator` to `scan`, and use
+`--config /config/rules.yaml --db /data/library.sqlite --reports /reports` with
+the same mode/recheck flags. All required tools are in the rebuilt image.
 
 ## Audio-based tag consistency (optional)
 
@@ -302,7 +482,7 @@ Source content hashes, sizes and modification times are checked across scans.
 - Scanner skips symlinked files and directories. Files are opened read-only relative to their directory descriptor without following links, and their stat signatures are checked before/after metadata parsing. Traversal/stat failures abort the scan and preserve the previous cache and reports. Descendant mount points are traversed; actual NAS mount behavior still needs deployment testing.
 - Metadata changes and pruning share one SQLite transaction. An interrupted discovery/validation rolls back the entire scan. The cache commits before report publication; a report-write failure can leave an updated cache with the previous complete report set. Rerunning safely revalidates the cache and publishes reports.
 - Cache's `(size, mtime_ns)` check can miss external edits that preserve both attributes; `--full-scan` forces metadata reread. No cryptographic change check is implemented.
-- Metadata parsing/read failures appear as `read_error`; absent ID3 headers produce missing-tag issues. Neither proves audio stream integrity; full decoding is a future option.
+- Metadata parsing/read failures appear as `read_error`; absent ID3 headers produce missing-tag issues. Neither proves audio stream integrity; enable the separate integrity checks for full decoding.
 - Multiple MP3 comments: baseline chooses first COMM frame; language and description selection need a policy. FLAC tags may be multi-valued: baseline chooses first value.
 - MP3 cover dimensions are not currently measured; minimum dimension rule only applies where dimensions are available (FLAC).
 - FLAC dimensions are read from the embedded image header with Pillow, rather than the potentially zero or stale width and height declared in the PICTURE block. Valid 600×600 or 800×800 artwork with declared zero dimensions is measured correctly. Image headers that cannot be read safely yield `artwork_dimensions_unavailable` when minimum dimensions are enabled, rather than a misleading `small_artwork` issue. Pixel data is not fully decoded; this is not an image-integrity test.
@@ -317,14 +497,23 @@ inherit defaults; empty `required_tags: []` and `artwork: {required: false}`
 explicitly disable those checks. Unknown keys, null sections, duplicate YAML keys,
 invalid regexes and unsupported template syntax are errors. See `docs/RULES.md`.
 
-An unversioned baseline database is migrated transactionally through schema 1 to
-schema 2 without dropping tracks. Its parser-version marker starts at zero, causing a one-time
+An unversioned baseline database is migrated transactionally through schemas 1–3 to
+schema 4 without dropping tracks. Its parser-version marker starts at zero, causing a one-time
 metadata refresh on the first successful upgraded scan. Future parser-version
 changes also trigger metadata refresh; ordinary YAML edits do not. Back up an
 existing database before upgrading; an older binary must not reuse the migrated
 database. Unsupported future schema versions are refused. Schema-1 caches upgrade
 to schema 2 by adding the audio fingerprint table; that upgrade alone does not
 refresh tag metadata or require audio decoding while the feature is disabled.
+Schema-2 caches upgrade to schema 3 by adding per-tool integrity results; metadata
+and fingerprints are preserved, without changing parser version 5.
+Schema 4 separates the current file inventory (`files`) from cached metadata
+(`tracks`) and records the execution mode on scans. Inventory starts from existing
+metadata rows. Integrity-only scans can update file signatures without marking
+old tags fresh; subsequent metadata/identity scans reparse changed entries.
+Removed files prune all caches after successful discovery. Changed-file metadata
+may remain cached but is excluded until refreshed. Existing fingerprints and
+integrity results retain their own signature/version checks.
 
 Parser version 3 refreshes older cached metadata once to include MP3 lyricist,
 original lyricist and compilation tags, and FLAC original-lyricist aliases.

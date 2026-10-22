@@ -1,0 +1,20 @@
+# Copy as rules.yaml inside a library directory. This is a patch, not a main config.
+# Removed custom IDs must exist in the configuration inherited by this directory.
+added_required_tags: [composer]
+removed_required_tags: [year]
+removed_custom_rules: [comment_has_origlyricist]
+added_custom_rules:
+  - id: comment_has_album
+    field: comment
+    template:
+      operator: contains
+      pattern: '{album}'
+    severity: warning
+artwork:
+  required: false
+  # Omitted settings are inherited; null disables each dimension check.
+  min_width: null
+  min_height: null
+# Put album_rules at the canonical album directory or above, never inside CD1/CD2.
+album_rules:
+  consistent_artwork: false

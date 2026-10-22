@@ -23,6 +23,14 @@
 
 ## P1 — quality features
 
+- Completed: hierarchical directory `rules.yaml` patches for required tags,
+  custom rules, artwork and album checks, with strict preflight, cached
+  revalidation, deterministic inheritance, disc-scope errors and change rollback.
+
+- Completed: dedicated integrity/identity CLI modes overriding YAML enable flags,
+  independent report families with coverage/group details, fingerprint-only rechecks,
+  schema-4 shared inventory with separate metadata freshness and cross-mode caching.
+
 - Completed: opt-in full-track local Chromaprint matching, configurable similarity,
   duration and coverage, independent schema-2 fingerprint caching, conservative
   complete-link groups and configurable audio-group tag conflicts in all reports.
@@ -42,8 +50,11 @@
 - Richer Boolean conditions, numeric comparisons and declarative cross-tag
   formulas with safe schema (never eval arbitrary Python/YAML).
 - Album sorting, issue filters, issue severity and suppressed/acknowledged flags.
-- FLAC stream verification as a separate opt-in operation with cached integrity results.
-- Optional checksum verification mode (slower), handling moved/renamed files.
+- Completed: opt-in FLAC native stream/MD5 verification and MP3val structure plus
+  strict FFmpeg MP3 decoding, schema-3 per-tool caching, incomplete-check retries,
+  integrity-only forced rechecks and shared issue/catalog reports. Real synthetic
+  damage and missing/mismatched FLAC MD5 are tested; benchmark large NAS libraries.
+- External checksum manifests and detection of moved/renamed files.
 - Persisted issue history and scan-delta reports (schema migrations and completed
   scan counters are implemented).
 

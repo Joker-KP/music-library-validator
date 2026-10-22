@@ -14,6 +14,7 @@ REPORT_FILES = (
     "catalog.csv",
     "catalog.json",
 )
+ISSUE_REPORT_FILES = REPORT_FILES[:3]
 
 
 def plain_path(path: Path):
@@ -37,7 +38,7 @@ def regular_output(path: Path):
             raise ValueError(f"Output must be a regular file with one link: {path}")
 
 
-def check_report_directory(dest: Path):
+def check_report_directory(dest: Path, report_files=REPORT_FILES):
     plain_path(dest)
     plain_path(dest / "generations")
     for directory in (dest, dest / "generations"):
@@ -59,7 +60,7 @@ def check_report_directory(dest: Path):
             raise ValueError(f"Missing report generation: {target}")
     elif current.exists():
         raise ValueError(f"Reserved report path must be a managed symlink: {current}")
-    for name in REPORT_FILES:
+    for name in report_files:
         path = dest / name
         if path.is_symlink():
             if path.readlink() != Path("current") / name:
@@ -68,7 +69,7 @@ def check_report_directory(dest: Path):
             regular_output(path)
 
 
-def check_outputs(root: Path, db: Path, reports: Path):
+def check_outputs(root: Path, db: Path, reports: Path, report_files=REPORT_FILES):
     for output in (db, reports):
         if output.resolve().is_relative_to(root):
             raise ValueError(f"Output must be outside the music library: {output}")
@@ -79,7 +80,7 @@ def check_outputs(root: Path, db: Path, reports: Path):
         raise ValueError("Database must be outside the report directory")
     for suffix in ("", "-journal", "-wal", "-shm", ".lock"):
         regular_output(Path(str(db) + suffix))
-    check_report_directory(reports)
+    check_report_directory(reports, report_files)
     regular_output(reports / ".scan.lock")
 
 

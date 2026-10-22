@@ -2,7 +2,7 @@
 
 ## Processing pipeline
 
-`validated config -> output preflight/ownership locks -> count-only descriptor discovery -> SQLite transaction -> processing discovery (cache/metadata + optional fingerprints) -> validation -> cache commit -> atomic HTML/CSV/JSON publication`
+`validated config/tool preflight -> output safety preflight -> counting discovery/local-rule preflight -> ownership locks -> SQLite transaction -> processing discovery (snapshot verification + cache/metadata + optional integrity/fingerprints) -> validation -> snapshot recheck -> cache commit -> atomic HTML/CSV/JSON publication`
 
 SQLite is a **cache of source-file metadata**, not the source of truth.
 `config.py`, `safety.py`, `scanner.py`, `metadata.py`, `database.py`, `validation.py`
@@ -19,10 +19,12 @@ the emitted validation issues, leaving zero counts blank in all catalog formats.
 
 The CLI performs two filesystem traversals. `scanner.count_files` streams the same
 filtered, symlink-safe descriptor discovery without opening audio or retaining
-paths; it runs before opening the cache transaction. `scanner.scan` then processes
-each file's metadata and optional fingerprint cache in one discovery traversal,
+audio paths; it runs before acquiring output locks or opening the cache transaction.
+An entry callback preflights local rule files, including directories without audio.
+`scanner.scan` then processes
+each file's metadata and optional integrity/fingerprint caches in one discovery traversal,
 including directory-size aggregation. A callback advances once per completed file,
-including cache hits and explicit read/fingerprint errors. The count is an estimate:
+including cache hits and explicit read/integrity/fingerprint errors. The count is an estimate:
 the CLI reports changes between traversals rather than trusting an obsolete list.
 
 `progress.py` owns display and time estimation on stderr. Scanning and audio rules
@@ -73,7 +75,7 @@ one directory at a time, uses no library-wide path/seen set, and opens descendan
 relative to read-only directory descriptors with `O_NOFOLLOW`. Traversal errors
 propagate. Discovery also totals recursive regular-file sizes in postorder,
 retaining only totals for detected album directories; links are excluded. This
-uses the same traversal, without rereading audio or opening sidecar contents.
+uses the same traversal, without rereading audio or opening other sidecar contents.
 Album validation and catalog aggregation load one album at a time. When enabled,
 cross-album validation makes a second pass over cached normalized metadata,
 projecting only title, canonical artist, album/path and configured tag values
@@ -108,9 +110,76 @@ errors and do not discard valid tags. Audio updates and comparisons join the exi
 scan transaction and publication guarantees. Neither partial fingerprints nor
 nonzero decoder exits are treated as valid audio identities.
 
+Schema 3 adds `audio_integrity`, keyed by `(path, check_name)`, with file size,
+nanosecond mtime, tool/profile version, normalized result JSON and check timestamp.
+Metadata, fingerprints and parser version 5 are preserved; migration and updates
+share the scan transaction. `integrity.py` preflights only selected tools for the
+configured extensions, invokes FLAC test mode, MP3val scan mode and strict FFmpeg
+audio-only decoding, then classifies diagnostics independently of tag rules.
+MP3val's zero exit code is insufficient: warnings/errors and completion output
+are parsed. Statuses are passed, warning, failed (media), or incomplete (execution).
+Completed failures are cached; incomplete checks retry. Changes to one tool/profile
+invalidate only its results. Timeout changes affect retries but do not invalidate
+completed results. `--recheck-integrity` refreshes enabled integrity results while
+retaining metadata/fingerprints; full scans refresh all enabled analyses. Pruning
+also runs while disabled, and disabled tools' findings are not reported.
+
+The scanner opens each source with `O_RDONLY|O_NOFOLLOW|O_NONBLOCK`, checks regular
+file identity/signature before and after each tool, and passes only its descriptor
+through `/proc/self/fd` with no shell. MP3val maps that descriptor read-only before
+resolving a name for diagnostics; no repair flag is used. FLAC's test mode writes
+no decoded output; FFmpeg forces the MP3 demuxer and maps `0:a:0` to null. Process output is drained by a reader
+thread with a bounded 128-KiB retained prefix/tail, execution has a configurable
+deadline and excess diagnostics produce an incomplete check. Filename and process
+address details are removed from diagnostics, which reports HTML-escape as usual.
+Confirmed errors exclude new and cached fingerprints from matching without losing
+cached tags. Warnings do not imply unreadability; a missing FLAC MD5 explicitly
+limits verification. Integrity and fingerprint decoding remain separate operations.
+Size/mtime cache hits cannot reveal silent storage changes preserving signatures:
+periodic forced rechecks are required, and passing tools is not proof of fidelity
+to an external recording master.
+
 Cache scope records the canonical root, root device/inode and extensions. Different
 scopes and future schemas are refused. Legacy rows must all fit the requested
 scope before adoption. Root identity changes require a separate database.
+
+## Dedicated execution modes
+
+`analysis_modes.py` resolves mutually exclusive integrity/identity CLI scopes
+before tool/output initialization. It overrides top-level feature enable flags
+only in the loaded config and retains detailed YAML settings. Empty applicable
+integrity selections/identity fields and rechecking excluded operations are errors.
+Normal scans retain YAML-driven rules, catalog and output contracts. Dedicated
+scans skip unrelated validation and catalog work; integrity-only also skips all
+metadata parsing. Identity reads current normalized tags through the existing
+metadata reader/cache and never starts integrity tools.
+
+Schema 4 transactionally creates `files` (path, album directory, size, mtime_ns,
+last-seen scan), seeds it from schema-3 tracks, and adds `scans.mode` defaulting
+historical rows to `configured`. Metadata parser version remains 5. File inventory
+refreshes on every mode; metadata signatures update only after metadata reads.
+Changed old metadata is retained but filtered by inventory signature in readers;
+it cannot become falsely fresh after integrity-only discovery. Completed discovery
+prunes absent inventory/metadata and stale audio cache signatures; interruption
+rolls back both. Fingerprint and integrity cache pruning now uses inventory,
+allowing new integrity results without metadata rows. Scope binding uses inventory.
+
+`--recheck-identity` bypasses fingerprint cache only; `--recheck-integrity` bypasses
+integrity cache only. Full scans bypass all caches required by the current mode.
+Identity-only consults signature-current cached integrity findings to exclude
+known errors without invoking their tools; matching errors/warnings are reported
+separately from these exclusions. Temporary SQLite activity tables record per-track
+and per-tool outcomes. An optional matching callback captures matched groups and
+minimum pair evidence without changing deterministic matching semantics.
+
+Dedicated report directories below the report base have independent locks,
+generations, `current` links and three issue exports. Publication/safety helpers
+accept the three-file manifest while defaulting to the existing six-file normal
+family. Base and selected paths are both preflighted, including config overwrite
+and library/database containment. All modes share the database lock. HTML/JSON
+stream activity/group details from SQLite; CSV keeps its existing issue schema.
+Normal report contents/schema are retained. Coverage summaries distinguish cached,
+executed, passed, warning, failed, incomplete, unselected and excluded outcomes.
 
 ## Album identity
 
@@ -160,6 +229,29 @@ one-time metadata refresh to replace old cached zero dimensions; later parser
 versions include this correction as well.
 
 ## Validation execution
+
+`local_rules.py` owns the six-key patch grammar, inheritance and read-only
+configuration snapshots. It reuses `config.py` schema/template checks on each
+effective configuration. Discovery calls its entry callback before audio or child
+directories, letting empty parent folders provide settings. Only directories with
+local files retain effective configurations and snapshots; lookups walk ancestors
+to the nearest stored configuration. Working memory additionally scales with local
+configuration count/content, not audio-file count. No schema or metadata signatures
+include rules: adding, editing or deleting patches revalidates the existing cache.
+
+The counting traversal loads all patches before writable outputs. The processing
+traversal checks presence, signatures and contents against the snapshot through
+verified directory descriptors; before commit, known files are reread safely and
+missing patch directories are rejected. Detected changes roll back. This is not an
+atomic filesystem snapshot; late additions can be discovered on the next run.
+
+`validate_tracks` takes per-track effective settings; `validate_albums` always
+receives complete albums with settings effective at their canonical directory.
+`validate` composes and sorts both results. Local track overrides never partition
+album comparisons. Explicit album patches in collapsed disc directories are
+configuration errors using the configured disc pattern. Global filename,
+cross-album and audio settings remain unchanged. All modes validate local YAML,
+but dedicated audio modes continue skipping track and album metadata rules.
 
 Missing-tag, image presence/dimensions, filename regex and template rules run per track. Album consistency and duplicate disc/track run per album. Issues include album, path, rule ID, severity and text. Configured `album_rules` flags enable/disable checks. All rules are read-only.
 

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Discover hierarchical `rules.yaml` patches inside the music library. Add/remove
+  required tags and custom rules, replace custom definitions by ID, and inherit
+  individual artwork/album settings. Track settings follow their actual folders;
+  album checks retain the full directory album across discs. Reject `album_rules`
+  in collapsed disc directories and keep filename/cross-album/audio settings global.
+- Preflight all local patches during counting before writable outputs; reject
+  invalid/symlinked/nonregular configurations. Use one configuration snapshot,
+  abort and roll back on detected changes, and revalidate cached metadata after
+  patch edits/additions/deletions without audio rereads or schema changes.
+
 - Count supported audio files before processing and display per-phase progress
   with file counts, percentage, elapsed time and ETA on stderr. Throttle terminal
   redraws and Docker/cron log lines; add `--no-progress`. Include cache hits and

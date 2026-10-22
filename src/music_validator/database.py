@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 PARSER_VERSION = 5
 
 
@@ -44,6 +44,24 @@ def connect(path: Path):
                 backend_version TEXT NOT NULL, duration REAL, fingerprint_json TEXT,
                 error TEXT
             )""")
+        if version < 3:
+            conn.execute("""CREATE TABLE audio_integrity (
+                path TEXT NOT NULL, check_name TEXT NOT NULL,
+                size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+                backend_version TEXT NOT NULL, result_json TEXT NOT NULL,
+                checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(path, check_name)
+            )""")
+        if version < 4:
+            conn.execute("""CREATE TABLE files (
+                path TEXT PRIMARY KEY, album_dir TEXT NOT NULL,
+                size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+                last_seen_scan INTEGER NOT NULL
+            )""")
+            conn.execute("""INSERT INTO files SELECT path,album_dir,size,mtime_ns,last_seen_scan
+                FROM tracks""")
+            conn.execute("CREATE INDEX idx_files_album ON files(album_dir,path)")
+            conn.execute("ALTER TABLE scans ADD COLUMN mode TEXT NOT NULL DEFAULT 'configured'")
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         return conn
     except BaseException:
@@ -70,7 +88,7 @@ def bind_library(conn, root: Path, extensions):
             "use a separate --db. --full-scan does not rebind a cache."
         )
     if not old:
-        for row in conn.execute("SELECT path FROM tracks"):
+        for row in conn.execute("SELECT path FROM files"):
             path = Path(row[0])
             if not path.is_relative_to(root) or path.suffix.lower() not in extensions:
                 raise ValueError(
@@ -106,8 +124,38 @@ def upsert(conn, path, album_dir, stat, metadata, error=None, scan_id=0):
 
 
 def iter_rows(conn):
-    for row in conn.execute("SELECT * FROM tracks ORDER BY album_dir,path"):
+    for row in conn.execute("""SELECT tracks.* FROM tracks JOIN files USING(path)
+        WHERE tracks.size=files.size AND tracks.mtime_ns=files.mtime_ns
+        ORDER BY tracks.album_dir,tracks.path"""):
         yield dict(row)
+
+
+def record_file(conn, path, album, info, scan_id):
+    conn.execute(
+        """INSERT INTO files VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET
+        album_dir=excluded.album_dir,size=excluded.size,mtime_ns=excluded.mtime_ns,
+        last_seen_scan=excluded.last_seen_scan""",
+        (str(path), str(album), info.st_size, info.st_mtime_ns, scan_id),
+    )
+
+
+def prune_files(conn, scan_id):
+    conn.execute("DELETE FROM files WHERE last_seen_scan<>?", (scan_id,))
+    conn.execute(
+        "DELETE FROM tracks WHERE NOT EXISTS (SELECT 1 FROM files WHERE files.path=tracks.path)"
+    )
+    prune_audio_fingerprints(conn)
+    prune_integrity_results(conn)
+
+
+def cached_integrity_errors(conn, path, info):
+    for row in conn.execute(
+        "SELECT result_json FROM audio_integrity WHERE path=? AND size=? AND mtime_ns=?",
+        (str(path), info.st_size, info.st_mtime_ns),
+    ):
+        if any(item["severity"] == "error" for item in json.loads(row[0])["findings"]):
+            return True
+    return False
 
 
 def rows(conn):
@@ -138,16 +186,102 @@ def save_audio_fingerprint(conn, path, info, version, duration, fingerprint, err
 
 def prune_audio_fingerprints(conn):
     conn.execute("""DELETE FROM audio_fingerprints WHERE NOT EXISTS (
-        SELECT 1 FROM tracks WHERE tracks.path=audio_fingerprints.path
-        AND tracks.size=audio_fingerprints.size AND tracks.mtime_ns=audio_fingerprints.mtime_ns
+        SELECT 1 FROM files WHERE files.path=audio_fingerprints.path
+        AND files.size=audio_fingerprints.size AND files.mtime_ns=audio_fingerprints.mtime_ns
     )""")
 
 
 def iter_audio_rows(conn):
     for row in conn.execute("""SELECT tracks.*,audio_fingerprints.duration,
         audio_fingerprints.fingerprint_json,audio_fingerprints.error AS fingerprint_error
-        FROM tracks JOIN audio_fingerprints USING(path) ORDER BY tracks.path"""):
+        FROM files JOIN tracks USING(path) JOIN audio_fingerprints USING(path)
+        WHERE tracks.size=files.size AND tracks.mtime_ns=files.mtime_ns
+        AND audio_fingerprints.size=files.size AND audio_fingerprints.mtime_ns=files.mtime_ns
+        ORDER BY tracks.path"""):
         yield dict(row)
+
+
+def integrity_result(conn, path, check):
+    return conn.execute(
+        "SELECT * FROM audio_integrity WHERE path=? AND check_name=?", (str(path), check)
+    ).fetchone()
+
+
+def save_integrity_result(conn, path, check, info, version, result):
+    conn.execute(
+        """INSERT INTO audio_integrity
+        (path,check_name,size,mtime_ns,backend_version,result_json) VALUES(?,?,?,?,?,?)
+        ON CONFLICT(path,check_name) DO UPDATE SET size=excluded.size,
+        mtime_ns=excluded.mtime_ns,backend_version=excluded.backend_version,
+        result_json=excluded.result_json,checked_at=CURRENT_TIMESTAMP""",
+        (
+            str(path),
+            check,
+            info.st_size,
+            info.st_mtime_ns,
+            version,
+            json.dumps(result.as_dict(), ensure_ascii=False),
+        ),
+    )
+
+
+def prune_integrity_results(conn):
+    conn.execute("""DELETE FROM audio_integrity WHERE NOT EXISTS (
+        SELECT 1 FROM files WHERE files.path=audio_integrity.path
+        AND files.size=audio_integrity.size AND files.mtime_ns=audio_integrity.mtime_ns
+    )""")
+
+
+def iter_integrity_rows(conn):
+    for row in conn.execute("""SELECT files.path,files.album_dir,
+        audio_integrity.check_name,audio_integrity.result_json
+        FROM files JOIN audio_integrity USING(path)
+        WHERE audio_integrity.size=files.size AND audio_integrity.mtime_ns=files.mtime_ns
+        ORDER BY files.album_dir,files.path,audio_integrity.check_name"""):
+        yield dict(row)
+
+
+def start_audio_activity(conn):
+    conn.execute("""CREATE TEMP TABLE integrity_activity (
+        path TEXT NOT NULL, check_name TEXT NOT NULL, source TEXT NOT NULL,
+        PRIMARY KEY(path,check_name))""")
+    conn.execute("""CREATE TEMP TABLE identity_activity (
+        path TEXT PRIMARY KEY, status TEXT NOT NULL, source TEXT NOT NULL,
+        reason TEXT NOT NULL)""")
+    conn.execute("CREATE TEMP TABLE identity_groups (details_json TEXT NOT NULL)")
+
+
+def iter_integrity_activity(conn):
+    for row in conn.execute("""SELECT files.path, files.album_dir AS album,
+        activity.check_name AS tool,activity.source,cache.checked_at,cache.result_json
+        FROM integrity_activity activity JOIN files USING(path)
+        LEFT JOIN audio_integrity cache
+        ON cache.path=activity.path AND cache.check_name=activity.check_name
+        ORDER BY files.album_dir,files.path,activity.check_name"""):
+        result = dict(row)
+        checked = json.loads(result.pop("result_json") or '{"status":"not_checked","findings":[]}')
+        yield {**result, **checked}
+
+
+def iter_identity_activity(conn):
+    for row in conn.execute("""SELECT files.path,files.album_dir AS album,
+        activity.status,activity.source,activity.reason
+        FROM identity_activity activity JOIN files USING(path)
+        ORDER BY files.album_dir,files.path"""):
+        yield dict(row)
+
+
+def save_identity_group(conn, group):
+    conn.execute("INSERT INTO identity_groups VALUES(?)", (json.dumps(group, ensure_ascii=False),))
+    conn.executemany(
+        "UPDATE identity_activity SET status='matched' WHERE path=?",
+        ((row["path"],) for row in group["tracks"]),
+    )
+
+
+def iter_identity_groups(conn):
+    for row in conn.execute("SELECT details_json FROM identity_groups ORDER BY rowid"):
+        yield json.loads(row[0])
 
 
 class AudioIndex:

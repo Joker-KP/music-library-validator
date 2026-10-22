@@ -1,4 +1,5 @@
 # Rules are deliberately non-destructive and apply to MP3 + FLAC unless specified.
+# Folder-specific patches: place rules.yaml inside /music; see local-rules.example.yaml.
 library_root: /music
 extensions: [.mp3, .flac]
 # Albums are grouped by directory; recognized disc folders map to their parent.
@@ -87,10 +88,20 @@ cross_album_rules:
     - [Wolna Grupa Bukowina, Wojciech Bellon]
     - [U Pana Boga za Piecem, Sylwek Szweda, Towarzystwo Wzajemnej Adoracji]
 
+# Optional full-stream validation; never repairs or rewrites originals.
+audio_integrity:
+  enabled: true
+  flac:
+    native_test: true
+  mp3:
+    structure_check: true
+    decode_check: true
+  timeout_seconds: 300
+
 # Opt in to full-track local decoding (fpcalc/libchromaprint-tools required).
 # Set enabled: true to compare tags on copies matched by audio alone.
 audio_identity_rules:
-  enabled: true
+  enabled: false
   fields: [title, artist, composer]
   severity: warning
   matching:

@@ -25,21 +25,29 @@ def _tracknum(value):
         return None
 
 
-def validate(rows, config):
+def validate(rows, config, *, track_config=None):
+    """Validate complete albums while allowing directory-specific track settings."""
+    rows = list(rows)
+    return sorted(
+        validate_tracks(rows, config, track_config=track_config) + validate_albums(rows, config),
+        key=lambda x: (x["album"], x["path"], x["rule"]),
+    )
+
+
+def validate_tracks(rows, config, *, track_config=None):
     issues = []
-    albums = defaultdict(list)
     for row in rows:
-        albums[row["album_dir"]].append(row)
+        effective = track_config(row) if track_config is not None else config
         if row.get("error"):
             issues.append(issue(row, "read_error", row["error"], "error"))
             continue
         meta = row["metadata"]
         tags = meta.get("tags", {})
-        for field in config.get("required_tags", []):
+        for field in effective.get("required_tags", []):
             if not str(tags.get(field, "")).strip():
                 issues.append(issue(row, "missing_" + field, f"Missing required tag: {field}"))
         artwork = meta.get("artwork", [])
-        ac = config.get("artwork", {})
+        ac = effective.get("artwork", {})
         if ac.get("required") and not artwork:
             issues.append(issue(row, "missing_artwork", "No embedded cover art"))
         for pic in artwork:
@@ -56,7 +64,7 @@ def validate(rows, config):
                         )
                     )
         filename = Path(row["path"]).stem
-        fc = config.get("filename", {})
+        fc = effective.get("filename", {})
         allowed = allowed_characters(fc.get("allowed_chars", DEFAULT_ALLOWED_CHARS))
         if allowed is not None:
             forbidden = sorted(set(filename) - allowed)
@@ -88,7 +96,7 @@ def validate(rows, config):
                 issues.append(
                     issue(row, "filename_template_error", f"Cannot render filename template: {exc}")
                 )
-        for rule in config.get("custom_rules", []):
+        for rule in effective.get("custom_rules", []):
             try:
                 message = failure_message(rule, meta)
                 if message is not None:
@@ -106,6 +114,14 @@ def validate(rows, config):
                         row, rule.get("id", "custom_rule"), f"Rule evaluation error: {exc}", "error"
                     )
                 )
+    return issues
+
+
+def validate_albums(rows, config):
+    issues = []
+    albums = defaultdict(list)
+    for row in rows:
+        albums[row["album_dir"]].append(row)
     ar = config.get("album_rules", {})
     for tracks in albums.values():
         good = [r for r in tracks if not r.get("error")]

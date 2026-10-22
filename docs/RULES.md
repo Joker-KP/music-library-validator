@@ -2,7 +2,7 @@
 
 See `config/rules.yaml` for runnable configuration.
 
-All scans also generate `catalog.html`, `catalog.csv` and `catalog.json` for every
+Normal configured scans also generate `catalog.html`, `catalog.csv` and `catalog.json` for every
 detected album, regardless of validation issues or enabled rules. Catalog fields
 and quality/size aggregation are documented in README's Album catalog section.
 
@@ -60,6 +60,103 @@ filename:
 Allow all filename characters with `filename: {allowed_chars: ''}`. Omission of
 the key enables the default allowlist. YAML-only changes to this setting and the
 disc-folder pattern take effect on the next scan without rereading audio.
+
+## Folder-specific rule patches
+
+The fixed local filename is `rules.yaml` (case-sensitive). Local files are UTF-8
+YAML mappings, separate from the main configuration selected by `--config`.
+The explicitly selected main file is always global and is not applied again as a
+local patch if it happens to be inside the library under this name. Keeping the
+main configuration outside `/music` is recommended.
+
+For a track `/music/Artist/Album/CD2/01 - Song.flac`, start with the validated main
+configuration, then apply any patches in `/music`, `Artist`, `Album` and `CD2`,
+in that order. No directories above the library root participate. Directories
+without audio files still contribute patches. Descendants inherit accumulated
+settings rather than resetting to the main configuration. Siblings do not affect
+each other. `{}` is a valid no-op; an empty file or null is an error.
+
+Only these six keys are accepted locally:
+
+| Key | Meaning |
+| --- | --- |
+| `added_required_tags` | Append normalized tag identifiers not already required. |
+| `removed_required_tags` | Remove inherited required tags; absent tags are a no-op. |
+| `removed_custom_rules` | Remove inherited custom rules by ID; unknown IDs are errors. |
+| `added_custom_rules` | Append full definitions with the same syntax, conditions and validation as main `custom_rules`. |
+| `artwork` | Override supplied `required`, `min_width`, `min_height` keys; inherit omitted keys. |
+| `album_rules` | Override supplied album-check booleans; inherit omitted keys. See scope below. |
+
+Omitted list keys mean `[]`, changing nothing. Lists must have the correct types;
+tag/ID lists must contain unique lowercase identifiers. Adding and removing the
+same required tag in one patch is an error. Required-tag ordering is preserved:
+inherited survivors first, then new additions in YAML order. A child can require
+a removed tag again with `added_required_tags`.
+
+Custom-rule removals happen before additions. Adding an ID still present in the
+inherited rules, or repeating an added ID, is an error. To replace a rule, include
+its ID in `removed_custom_rules` and its complete new definition in
+`added_custom_rules`. Inherited surviving rules retain their order; new rules
+append in YAML order. A descendant may reintroduce a removed rule by supplying
+its full definition. Removing an ID already removed by an ancestor is an error.
+These IDs refer only to custom rules; they cannot suppress built-in checks.
+
+```yaml
+added_required_tags: [composer]
+removed_required_tags: [year]
+removed_custom_rules: [comment_has_origlyricist]
+added_custom_rules:
+  - id: comment_has_album
+    field: comment
+    template:
+      operator: contains
+      pattern: '{album}'
+    severity: warning
+artwork:
+  required: false
+  min_width: null
+  min_height: null
+album_rules:
+  consistent_artwork: false
+```
+
+An optional cover (`required: false`) is still checked against inherited dimension
+minima if present. Disable those separately with null or zero minima. Required
+tags refer to fields already exposed by the metadata reader; patches cannot add
+unsupported ID3 frame readers.
+
+**Album scope:** track checks use the configuration at the actual track parent.
+Album checks use the configuration at the canonical directory album, including
+its ancestors. They always compare all tracks in the album across collapsed disc
+directories. Explicit `album_rules` in a collapsed disc directory such as `CD2`
+or `Album - CD2` are rejected, even if empty; move those settings to the album
+directory identified by the error. The global `disc_folder_pattern` determines
+which directories collapse. This scope also applies to `disc_number_mismatch`.
+
+Main-only keys such as `library_root`, `extensions`, `disc_folder_pattern`,
+`required_tags`, `custom_rules`, `filename`, `cross_album_rules`,
+`audio_integrity` and `audio_identity_rules` are rejected locally. Cross-album
+and audio checks remain global. Dedicated audio modes still preflight local YAML
+in full, but do not execute its metadata checks.
+
+Patches are parsed during the counting pass before output locks, directories or
+database/report writes. Duplicate YAML keys, unknown options, invalid types,
+conditions and templates are errors identifying the local file. Only regular
+files opened read-only through verified directory descriptors are accepted;
+symlinks, FIFOs and directories named `rules.yaml` are rejected. Symlinked
+directories remain excluded from library traversal.
+
+Each run uses the preflight configuration snapshot. The processing traversal
+checks local presence, signatures and contents against it; known patch files are
+checked again before committing. Detected edits, additions, deletions, replacements
+or disappearing patch directories abort the scan, roll back cache updates and
+retain previous reports. This does not create an atomic filesystem snapshot;
+an addition after a directory's processing visit can take effect next run.
+
+Every run rediscovers patches; edits and deletions revalidate unchanged cached
+metadata without audio rereads, parser-version changes or a database migration.
+Issue schemas and album grouping are unchanged, and all output formats use the
+same resulting issues. No source files are changed and `/music:ro` remains valid.
 
 ## Year and date fields
 
@@ -347,12 +444,78 @@ entries on all scans, including when the feature is disabled. Like the metadata
 cache, external changes preserving size and nanosecond mtime require `--full-scan`.
 Renames are not detected as moves. No issue history is added.
 
+## Audio integrity
+
+`audio_integrity` defaults to disabled. Nested defaults are
+`flac: {native_test: true}`, `mp3: {structure_check: true, decode_check: true}` and
+`timeout_seconds: 300`. All switches require booleans; the timeout must be a finite
+positive number. Partial nested mappings inherit defaults. Unknown/null options
+are rejected before output initialization. This feature runs native full-stream
+tools independently of metadata and audio identity; see README for full config
+and invocation examples.
+
+| Rule | Severity | Meaning |
+| --- | --- | --- |
+| `audio_decode_error` | error | FLAC or strict FFmpeg reported invalid audio data/decoding failure. |
+| `flac_checksum_mismatch` | error | Decoded audio disagrees with the stored FLAC MD5. |
+| `flac_checksum_unavailable` | warning | No stored FLAC MD5; native stream checks ran with limited verification. |
+| `mp3_structure_error` | error | MP3val reported invalid MPEG format. |
+| `mp3_structure_warning` | warning | MP3val reported junk, resynchronization, possible truncation or another structural inconsistency. |
+| `audio_integrity_warning` | warning | Other nonfatal diagnostics from FLAC/FFmpeg. |
+| `audio_integrity_incomplete` | warning | Tool timeout/crash/I/O/unknown failure, changed file or excessive diagnostics; no completed verdict. |
+
+MP3val diagnostics are parsed even when it exits zero. Missing tags belong to tag
+rules; FFmpeg's duration-estimation message alone adds no issue. Structural
+warnings do not establish audible damage or definite truncation. MP3 decoding
+excludes attached pictures; a FLAC MD5 mismatch indicates disagreement, without
+claiming whether audio bytes or the stored checksum were damaged. Short tracks and
+silence may pass integrity even though fingerprint quality rules reject them.
+
+Findings use the existing album/path/rule/severity/message report schema and catalog
+counts. Confirmed errors exclude the track from audio identity groups; structural
+warnings alone do not. File readability, tag validity, fingerprint usability and
+integrity remain separate. Results are independently cached per tool; completed
+media failures are reused, incomplete execution retries. No tool repairs audio.
+Only enabled checks contribute findings; enabling another check preserves existing
+tool results. `--recheck-integrity` repeats enabled checks without refreshing tags
+or fingerprints. Periodic forced checks are needed for damage preserving size/mtime.
+
+## Dedicated audio modes and rule scope
+
+`--audio-integrity-only` and `--audio-identity-only` are mutually exclusive.
+They override the selected feature's `enabled` flag and disable the other feature
+for this process, without rewriting YAML. Tool switches/timeouts and identity
+fields/severity/matching values retain configured/default values. A dedicated mode
+with no applicable checks or an empty identity field list is a configuration error.
+Full YAML validation still applies before output creation.
+
+Dedicated modes skip required-tag, artwork, filename, custom, album and cross-album
+rules and catalog generation. Integrity-only does not parse metadata at all.
+Identity-only reads tags needed for comparison via the existing metadata cache/
+reader and emits identity conflicts, `audio_fingerprint_error`, metadata
+`read_error`, and `audio_identity_skipped_integrity` warnings for exclusions from
+matching due to cached signature-current integrity errors. It invokes no integrity
+tools and does not copy their original issues into the identity issue list.
+
+Reports go to `integrity-report/` or `identity-report/` below `--reports`, with
+independent atomic HTML/CSV/JSON generations. Normal report/catalog outputs are
+preserved. Specialist JSON adds `analysis` (mode/settings/statistics), `results`
+(per-file/check coverage), and identity `groups` (including consistent groups).
+HTML exposes the same coverage/group details, with escaping; CSV retains the
+existing issue schema and agrees with HTML/JSON issues.
+
+Modes reuse caches. `--recheck-integrity` repeats integrity checks;
+`--recheck-identity` re-extracts fingerprints without refreshing current metadata.
+Matching itself re-runs with current settings. Full scans refresh only the selected
+mode's dependencies. Rechecking an excluded/disabled operation is rejected before
+output creation. Shared inventory is independent of cached metadata freshness;
+all modes use the same database lock and completed-discovery pruning.
+
 ## Intended future rule syntax
 
 - Richer Boolean conditions (OR/negation) and numeric comparisons
 - Filename and parent folder template rules with sanitization/Unicode normalization
 - Track title formatting (regex, case, punctuation), disc numbering consistency, numeric track range and gaps, total-tracks sanity, calendar date validity and year/date consistency
-- Audio stream integrity via external `flac -t`; optional MP3 decoding verification
 - Album-level reports of cover resolution, art hash conflicts, and tag value distributions
 - Multi-value tag policy, comment selection, custom user fields and richer cross-tag expressions
 

@@ -186,8 +186,8 @@ def test_audio_cache_prunes_removed_and_changed_tracks(audio_setup, tmp_path):
     con = database.connect(tmp_path / "cache.sqlite")
     try:
         paths = [row[0] for row in con.execute("SELECT path FROM tracks ORDER BY path")]
-        con.execute("DELETE FROM tracks WHERE path=?", (paths[0],))
-        con.execute("UPDATE tracks SET size=size+1 WHERE path=?", (paths[1],))
+        con.execute("DELETE FROM files WHERE path=?", (paths[0],))
+        con.execute("UPDATE files SET size=size+1 WHERE path=?", (paths[1],))
         database.prune_audio_fingerprints(con)
         assert con.execute("SELECT count(*) FROM audio_fingerprints").fetchone()[0] == 0
     finally:
@@ -238,6 +238,9 @@ def test_schema1_migration_preserves_cached_tags_and_can_roll_back(audio_setup, 
     with sqlite3.connect(path) as con:
         before = con.execute("SELECT * FROM tracks ORDER BY path").fetchall()
         con.execute("DROP TABLE audio_fingerprints")
+        con.execute("DROP TABLE audio_integrity")
+        con.execute("DROP TABLE files")
+        con.execute("ALTER TABLE scans DROP COLUMN mode")
         con.execute("PRAGMA user_version=1")
     con = database.connect(path)
     con.rollback()
@@ -249,7 +252,7 @@ def test_schema1_migration_preserves_cached_tags_and_can_roll_back(audio_setup, 
     with patch.object(scanner, "read_metadata", side_effect=AssertionError("metadata reread")):
         assert len(scan()) == 2 and backend.calls == 2
     with sqlite3.connect(path) as con:
-        assert con.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert con.execute("PRAGMA user_version").fetchone()[0] == database.SCHEMA_VERSION
         assert con.execute("SELECT metadata_json FROM tracks ORDER BY path").fetchall() == [
             (r[4],) for r in before
         ]

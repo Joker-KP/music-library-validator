@@ -77,7 +77,7 @@ def compare(a, b, matching):
     return None
 
 
-def validate_audio_identity(index, options, progress=None):
+def validate_audio_identity(index, options, progress=None, on_group=None):
     """Deterministic greedy complete-link groups; no transitive chain merging.
 
     The index stores fingerprints/tag projections in SQLite. Python retains path
@@ -113,6 +113,23 @@ def validate_audio_identity(index, options, progress=None):
         rows = [index.get(path) for path in paths]
         identifier = hashlib.sha256(json.dumps(paths, ensure_ascii=False).encode()).hexdigest()[:16]
         confidence = evidence[group]
+        if on_group is not None:
+            on_group(
+                {
+                    "id": identifier,
+                    "similarity_min": confidence.similarity,
+                    "coverage_min": confidence.coverage,
+                    "conflicting_fields": [
+                        field
+                        for field in options["fields"]
+                        if len({row["values"][field] for row in rows}) > 1
+                    ],
+                    "tracks": [
+                        {"path": row["path"], "album": row["album_dir"], "values": row["values"]}
+                        for row in rows
+                    ],
+                }
+            )
         for field in options["fields"]:
             references = {}
             for row in rows:

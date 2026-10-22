@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: sudo apt-get update && sudo apt-get install -y libchromaprint-tools ffmpeg
+      - run: sudo apt-get update && sudo apt-get install -y libchromaprint-tools ffmpeg flac mp3val
       - run: python -m pip install -e '.[dev]'
       - run: python -m pytest -q
       - run: ruff check src tests
