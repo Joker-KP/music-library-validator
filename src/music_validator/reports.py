@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,7 +14,12 @@ from .catalog import CATALOG_COLUMNS
 from .safety import REPORT_FILES, check_report_directory
 
 
-def _render_catalog(dest: Path, albums: list[dict], generated_at: str):
+def _render_catalog(dest: Path, albums: list[dict], generated_at: str, issues: list):
+    issue_counts = Counter(item["album"] for item in issues)
+    albums = [
+        {"no": number, **album, "number_of_issues": issue_counts[album["album_dir"]] or ""}
+        for number, album in enumerate(albums, start=1)
+    ]
     (dest / "catalog.json").write_text(
         json.dumps({"generated_at": generated_at, "albums": albums}, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -148,7 +153,7 @@ def write_reports(dest: Path, issues: list, count: int, catalog: list | None = N
     published = False
     try:
         summary = _render(generation, issues, count)
-        _render_catalog(generation, catalog or [], summary["generated_at"])
+        _render_catalog(generation, catalog or [], summary["generated_at"], issues)
         for name in REPORT_FILES:
             with (generation / name).open("rb") as source:
                 os.fsync(source.fileno())

@@ -49,7 +49,7 @@ def test_catalog_html_escapes_metadata_and_folder_attributes(tmp_path):
         "year": "2001",
         "album": "Żółć & Łódź",
         "quality": "FLAC",
-        "folder_size_mb": 1.25,
+        "folder_size_mb": 1,
         "total_tracks": 2,
     }
     write_reports(tmp_path, [], 2, [row])
@@ -58,8 +58,54 @@ def test_catalog_html_escapes_metadata_and_folder_attributes(tmp_path):
     assert "&lt;script&gt;" in document
     assert "Żółć &amp; Łódź" in document
     assert 'title="&quot; onmouseover=&quot;alert(1)"' in document
-    assert document.count('<th scope="col">') == 6
-    assert json.loads((tmp_path / "catalog.json").read_text())["albums"] == [row]
+    assert document.count('<th scope="col">') == 8
+    assert json.loads((tmp_path / "catalog.json").read_text())["albums"] == [
+        {"no": 1, **row, "number_of_issues": ""}
+    ]
+
+
+def test_catalog_numbers_and_issue_counts_agree_across_formats(tmp_path):
+    rows = [
+        {
+            "album_dir": directory,
+            "album_artist": "Artist",
+            "year": "2001",
+            "album": "Album",
+            "quality": "FLAC",
+            "folder_size_mb": 2,
+            "total_tracks": 1,
+        }
+        for directory in ("/music/<b>A</b>", "/music/clean", "/music/another")
+    ]
+    entries = issues("first") + issues("second")
+    entries.append({**issues("third")[0], "album": "/music/another", "severity": "error"})
+    write_reports(tmp_path, entries, 3, rows)
+    albums = json.loads((tmp_path / "catalog.json").read_text())["albums"]
+    assert [album["no"] for album in albums] == [1, 2, 3]
+    assert [album["number_of_issues"] for album in albums] == [2, "", 1]
+    with (tmp_path / "catalog.csv").open(encoding="utf-8-sig", newline="") as stream:
+        reader = csv.DictReader(stream)
+        assert reader.fieldnames == [
+            "no",
+            "album_artist",
+            "year",
+            "album",
+            "quality",
+            "folder_size_mb",
+            "total_tracks",
+            "number_of_issues",
+        ]
+        assert list(reader) == [
+            {key: str(value) for key, value in album.items() if key != "album_dir"}
+            for album in albums
+        ]
+    document = (tmp_path / "catalog.html").read_text()
+    assert '<thead><tr><th scope="col">No</th>' in document
+    assert '<th scope="col">Number of issues</th></tr></thead>' in document
+    for number, issue_count in ((1, "2"), (2, ""), (3, "1")):
+        assert f"<td>{number}</td><td>Artist</td>" in document
+        assert f"<td>2</td><td>1</td><td>{issue_count}</td></tr>" in document
+    assert all("no" not in row and "number_of_issues" not in row for row in rows)
 
 
 def test_adding_catalog_to_existing_three_file_generation(tmp_path):

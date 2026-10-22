@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a first `No` column and last `Number of issues` column to the catalog,
+  numbering albums from 1 and leaving zero issue counts blank. Round folder
+  sizes to whole MB. Apply the same fields to HTML, CSV and JSON exports
+  (`no`, `number_of_issues`, integer `folder_size_mb`). Issue-report schemas stay
+  unchanged; no metadata reread or database migration is required.
 - Add `catalog.html`, `catalog.csv` and `catalog.json` for every detected album,
   including clean albums: album artist, year, album, worst-track quality,
   recursive folder size in decimal MB and track count. Publish catalogs and

@@ -26,8 +26,15 @@ def test_worst_album_quality(tracks, quality):
     result = summarize_album(tracks, 1234567)
     assert result["quality"] == quality
     assert result["total_tracks"] == len(tracks)
-    assert result["folder_size_mb"] == 1.23
+    assert result["folder_size_mb"] == 1
     assert result["album_dir"] == "/music/Artist/Album"
+
+
+@pytest.mark.parametrize("size,mb", [(0, 0), (499_999, 0), (1_234_567, 1), (1_999_999, 2)])
+def test_catalog_size_rounds_to_whole_mb(size, mb):
+    result = summarize_album([track()], size)
+    assert result["folder_size_mb"] == mb
+    assert isinstance(result["folder_size_mb"], int)
 
 
 def test_catalog_preserves_conflicts_and_falls_back_for_missing_tags():

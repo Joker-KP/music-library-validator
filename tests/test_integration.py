@@ -67,9 +67,11 @@ def test_catalog_includes_clean_albums_discs_sizes_and_cache(tmp_path, library, 
     assert len(catalog["albums"]) == 1
     row = catalog["albums"][0]
     assert row["album_dir"] == str(album)
+    assert row["no"] == 1
+    assert row["number_of_issues"] == ""
     assert row["total_tracks"] == 2
     assert row["quality"] == "MP3 64"
-    assert row["folder_size_mb"] == round(sum(v[1] for v in before.values()) / 1_000_000, 2)
+    assert row["folder_size_mb"] == round(sum(v[1] for v in before.values()) / 1_000_000)
     assert signatures(library) == before
     assert catalog["generated_at"] == report(tmp_path)["generated_at"]
     with (tmp_path / "reports/catalog.csv").open(encoding="utf-8-sig", newline="") as stream:
@@ -82,6 +84,14 @@ def test_catalog_includes_clean_albums_discs_sizes_and_cache(tmp_path, library, 
     updated = json.loads((tmp_path / "reports/catalog.json").read_text())["albums"][0]
     assert updated["folder_size_mb"] > row["folder_size_mb"]
     assert updated["total_tracks"] == 2
+    # Rule changes update issue counts without rereading cached audio.
+    config = yaml.safe_load(config_file.read_text())
+    config["required_tags"] = ["genre"]
+    config_file.write_text(yaml.safe_dump(config))
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        run_scan(tmp_path, config_file)
+    updated = json.loads((tmp_path / "reports/catalog.json").read_text())["albums"][0]
+    assert updated["number_of_issues"] == len(report(tmp_path)["issues"]) == 2
 
 
 def test_catalog_read_errors_are_counted_and_marked_unknown(tmp_path, config_file):
@@ -129,7 +139,7 @@ def test_catalog_nested_album_sizes_and_track_counts(tmp_path, library, config_f
     assert [row["quality"] for row in rows] == ["MP3 64", "FLAC"]
     for row, directory in zip(rows, [album, nested]):
         size = sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
-        assert row["folder_size_mb"] == round(size / 1_000_000, 2)
+        assert row["folder_size_mb"] == round(size / 1_000_000)
 
 
 def test_empty_library_has_empty_catalog(tmp_path):
@@ -142,7 +152,7 @@ def test_empty_library_has_empty_catalog(tmp_path):
     assert "No albums found" in (tmp_path / "reports/catalog.html").read_text()
     with (tmp_path / "reports/catalog.csv").open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
-        assert len(reader.fieldnames) == 6
+        assert len(reader.fieldnames) == 8
         assert list(reader) == []
 
 

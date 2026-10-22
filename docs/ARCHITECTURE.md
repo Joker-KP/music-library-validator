@@ -10,7 +10,9 @@ and `reports.py` separate configuration, output safety, discovery, normalization
 persistence, rules and rendering. `characters.py` shares the safe filename
 allowlist grammar between configuration validation and rules. `custom_rules.py`
 evaluates declarative conditions and template comparisons on normalized metadata.
-`catalog.py` summarizes each album independently of its validation issues.
+`catalog.py` summarizes each album's metadata and rounds recursive folder sizes
+to whole MB. Rendering adds consecutive row numbers and per-album counts from
+the emitted validation issues, leaving zero counts blank in all catalog formats.
 `cli.py` coordinates them.
 
 Configuration changes revalidate all indexed metadata each run. Derived date/year

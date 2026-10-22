@@ -215,10 +215,12 @@ and keep the generation referenced by `current`. This retention uses disk space.
 ## Album catalog
 
 Every scan also creates a standalone `reports/catalog.html` table with these
-columns: album artist, year, album, quality, folder size (MB), total number of
-tracks. Disc folders share one album row, using the same directory identity as
-validation. Rows are ordered by album directory, independently of tag values.
+columns: No, album artist, year, album, quality, folder size (MB), total number of
+tracks, Number of issues. Disc folders share one album row, using the same
+directory identity as validation. Rows are ordered by album directory,
+independently of tag values.
 
+- `No` numbers album rows consecutively from 1 in that directory order.
 - Album artist uses `albumartist`, falling back to `artist` for each track.
   Missing artist/year values display `Unknown`; missing album names fall back
   to the album directory name. Distinct values within one album are sorted and
@@ -231,17 +233,22 @@ validation. Rows are ordered by album directory, independently of tag values.
   `Unknown`. This is a format/bitrate summary, not an audio-integrity guarantee.
 - Folder size sums the logical sizes of all regular files recursively under
   that album directory, including artwork and other sidecars. Symlinks and
-  directory overhead are excluded. MB means 1,000,000 bytes, rounded to two
-  decimal places. If a nested folder is also a separate album, its bytes count
-  in both its own folder size and the parent's recursive size. Sizes are
-  collected during discovery on every scan, even when audio metadata is cached.
+  directory overhead are excluded. MB means 1,000,000 bytes, rounded to the
+  nearest whole MB (so folders below 0.5 MB display 0). If a nested folder is
+  also a separate album, its bytes count in both its own folder size and the
+  parent's recursive size. Sizes are collected during discovery on every scan,
+  even when audio metadata is cached.
 - Track count includes all detected MP3/FLAC files in the configured extension
   scope, including files whose metadata could not be read. An empty directory
   with no detected tracks is not an album.
+- Number of issues counts all emitted validation issues for that album, across
+  all tracks and severities, including album-level issues. It is blank when none
+  are present and updates when rules change, even when audio metadata is cached.
 
-`catalog.csv` uses six columns: `album_artist`, `year`, `album`, `quality`,
-`folder_size_mb`, `total_tracks`. `catalog.json` contains `generated_at` and an
-`albums` array with the same fields (numeric size/count), plus `album_dir` for
+`catalog.csv` uses eight columns: `no`, `album_artist`, `year`, `album`, `quality`,
+`folder_size_mb`, `total_tracks`, `number_of_issues`. `catalog.json` contains
+`generated_at` and an `albums` array with the same fields (integer row number, size and counts;
+`number_of_issues` is an empty string when none), plus `album_dir` for
 unambiguous directory identity. The HTML exposes the directory in each row's
 hover tooltip. All catalog formats share the issue report's generation time.
 

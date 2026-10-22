@@ -3,12 +3,14 @@
 from pathlib import Path
 
 CATALOG_COLUMNS = (
+    ("no", "No"),
     ("album_artist", "Album artist"),
     ("year", "Year"),
     ("album", "Album"),
     ("quality", "Quality"),
     ("folder_size_mb", "Folder size (MB)"),
     ("total_tracks", "Total number of tracks"),
+    ("number_of_issues", "Number of issues"),
 )
 
 
@@ -45,6 +47,6 @@ def summarize_album(rows: list[dict], folder_size: int) -> dict:
         "year": "; ".join(sorted(years)),
         "album": "; ".join(sorted(albums)),
         "quality": min(_quality(row) for row in rows)[2],
-        "folder_size_mb": round(folder_size / 1_000_000, 2),
+        "folder_size_mb": round(folder_size / 1_000_000),
         "total_tracks": len(rows),
     }
