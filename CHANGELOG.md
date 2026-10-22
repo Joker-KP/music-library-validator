@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Count supported audio files before processing and display per-phase progress
+  with file counts, percentage, elapsed time and ETA on stderr. Throttle terminal
+  redraws and Docker/cron log lines; add `--no-progress`. Include cache hits and
+  explicit file errors, adjust changed count estimates, and mark failed phases.
+  Process metadata and optional fingerprints in the same second filesystem walk,
+  keeping report schemas and the existing stdout summary unchanged.
+
+- Add opt-in `audio_identity_rules` for copies matched by full-track local
+  Chromaprint audio, independent of tags and album directories. Configure `fields`,
+  `severity` and `matching.similarity_threshold` (0.95),
+  `duration_tolerance_seconds` (2.0) and `minimum_coverage` (0.90). Every pair must
+  match to join a group; report `audio_identity_<field>` conflicts on every copy
+  in HTML/CSV/JSON and catalog counts. Default metadata validation is unchanged.
+- Migrate SQLite to schema 2, retaining all metadata and adding an independent,
+  versioned fingerprint cache. Matching/rule edits reuse fingerprints; changed,
+  failed or outdated fingerprints and full scans decode again. Report short,
+  low-information and failed decoding separately as `audio_fingerprint_error`.
+- Include `libchromaprint-tools` in Docker and real MP3/FLAC fingerprint tests in
+  CI. Audio decoding remains disabled by default and performs no online lookups
+  or writes to music. Document installation, score semantics, limits and tuning.
+
 - **New default validation:** compare `composer`, `lyricist` and `origlyricist`
   for the same title/artist across distinct albums. Emit per-copy, per-field
   `cross_album_*` warnings with conflicting values and reference paths; missing

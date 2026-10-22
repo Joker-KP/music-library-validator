@@ -2,6 +2,10 @@
 
 ## P0 — harden functional baseline
 
+- Completed: count-only discovery followed by one metadata/fingerprint processing
+  traversal, per-phase stderr progress with counts/ETA, throttled terminal/log
+  output, quiet mode and regression coverage for cache hits, errors and drift.
+
 - Completed: synthetic MP3/FLAC fixtures and subprocess CLI regression tests.
 - Completed: strict configuration validation, defaults and restricted template syntax.
 - Completed: transactional scan generations, error-aware discovery, scope binding,
@@ -18,6 +22,12 @@
 - Added a Linux CI matrix for Python 3.11, 3.12 and 3.14; benchmark large-library scans.
 
 ## P1 — quality features
+
+- Completed: opt-in full-track local Chromaprint matching, configurable similarity,
+  duration and coverage, independent schema-2 fingerprint caching, conservative
+  complete-link groups and configurable audio-group tag conflicts in all reports.
+  Real synthetic MP3/FLAC and cached revalidation are tested; calibrate real-library
+  thresholds and benchmark CPU, temporary SQLite disk use and NAS deployment.
 
 - Completed: cross-album composer, lyricist and original-lyricist consistency
   for matching title/artist pairs, configurable artist alias groups and cached

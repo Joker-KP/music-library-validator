@@ -13,6 +13,30 @@ music-validator scan --config config/rules.yaml --db data/library.sqlite --repor
 python -m pytest -q
 ```
 
+## Scan progress
+
+Every scan first walks the directory tree to count supported audio files, without
+opening audio, reading tags, decoding or changing the cache. A second filesystem
+pass processes metadata and, when enabled, fingerprints together. Unchanged cached
+tracks count toward progress because they are still checked and revalidated.
+
+Progress appears on stderr with the file count, percentage, elapsed time and an
+estimated remaining time. Terminals update one bar in place; Docker/cron logs get
+plain lines at most every ten seconds, plus phase start/completion. Phase names
+are padded with spaces so progress bars start in the same column. The counting
+phase shows the number found so far. Later phases show tag validation, cross-album
+rules, optional audio indexing/matching and report publication, so finishing file
+discovery does not imply the whole analysis has finished. A phase reaches 100%
+only after it succeeds; failures and interruptions are marked failed. ETA is an
+estimate from completed files in that phase, not a prediction for the whole run.
+
+Files added/removed between counting and processing can change the total; the CLI
+reports the difference and finishes with the actual processed count. Both passes
+skip symlinks and use the same extension filters. This adds one directory/stat
+traversal to metadata-only scans, without retaining a library-wide path list.
+Use `music-validator scan ... --no-progress` to suppress progress; the counting
+pass and normal stdout summary remain. The same flag works in Compose commands.
+
 ## Docker / Synology
 
 1. Edit `compose.yaml`, replacing `/volume1/music` with your music directory.
@@ -23,6 +47,11 @@ python -m pytest -q
 5. Subsequent runs use SQLite cache. To rebuild metadata: `docker compose run --rm music-validator scan --config /config/rules.yaml --db /data/library.sqlite --reports /reports --full-scan`.
 
 In Docker use `/music` in `rules.yaml`. Music is mounted `:ro`; SQLite and reports are writable volumes. No web server or port is exposed. Can be scheduled with Synology Task Scheduler or cron. The container starts only for a scan.
+
+The Dockerfile installs system packages and creates the runtime user before copying
+application files. Iterative source edits therefore reuse that layer and rebuild
+only the application copy/install steps. Keep Docker's build cache enabled for
+normal development builds.
 
 The scanner targets Linux, including Ubuntu and Synology, and uses directory
 descriptors, `O_NOFOLLOW` and `flock`. Keep database and report directories owned
@@ -164,9 +193,87 @@ The existing first-value policy for multi-valued tags still applies.
 
 ## Implementation status
 
+Audio-based tag consistency is also available as an opt-in check; see below.
+
 Implemented: recursive file enumeration, ID3 and FLAC Vorbis Comment normalization via Mutagen, MP3 APIC / FLAC Picture detection, album directory grouping with disc suffixes, disc-folder fallback, missing field / cover / filename regex and allowed-character checks, optional filename template and conditional custom rules, lyricist/original-lyricist/compilation normalization, album/title and albumartist consistency options, duplicate `(disc, track)` detection, optional cover-hash consistency, SQLite incremental cache, read errors, and issue/catalog reports in HTML, CSV and JSON.
 
-Not implemented yet: MP3 cover image dimension measurement; FLAC stream integrity check (`flac -t`); hashing music/audio data; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; a persistent web UI; reproducible locked dependencies; structured logging and performance benchmarks.
+Not implemented yet: MP3 cover image dimension measurement; FLAC stream integrity check (`flac -t`); cryptographic audio checksums; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; a persistent web UI; reproducible locked dependencies; structured logging and performance benchmarks.
+
+## Audio-based tag consistency (optional)
+
+Match copies of the same recording using audio alone, then compare selected tags.
+Unlike the title/artist cross-album rule, this can find different or missing titles
+and artists, and includes copies within the same album and across albums. Album
+identity still comes from directories; audio matching never merges catalog albums.
+
+```yaml
+audio_identity_rules:
+  enabled: true
+  fields: [title, artist, composer]
+  severity: warning
+  matching:
+    similarity_threshold: 0.95
+    duration_tolerance_seconds: 2.0
+    minimum_coverage: 0.90
+```
+
+The shipped configuration uses these settings with `enabled: false`, so normal
+metadata scans do not decode audio or require extra local tools. Set true to opt
+in. For Ubuntu, install `sudo apt-get install libchromaprint-tools`; Docker images
+include `fpcalc` and its decoder libraries after rebuilding. No AcoustID account,
+API key, network calls, uploads or tag writes are involved. The first enabled scan
+decodes each track in full, rather than fpcalc's default first 120 seconds. Expect
+extra CPU and I/O on a NAS. Subsequent unchanged scans reuse fingerprints in SQLite.
+
+Chromaprint fingerprints tolerate lossy encoding differences but are not universal
+recording IDs. We compare aligned fingerprint sequences for similarity, rather than
+requiring identical hashes. The score is the fraction of aligned 32-bit fingerprint
+words within two bit errors; 0.95 is not a 95% probability. Coverage is the overlap
+divided by the longer fingerprint sequence. Both thresholds and the duration
+tolerance must pass for **every pair** in a group. This prevents A–B–C similarity
+chains from merging A and C when they do not match directly.
+
+The defaults are conservative starting points, verified with synthetic FLAC and
+gapless MP3 encodings. Files without encoder-delay metadata, added silence, edits,
+remasters or other performances may need different settings or remain separate.
+Tune against representative known matches and known different recordings before
+relying on the results. This identifies recordings, not all performances of a song.
+
+Conflicts produce `audio_identity_<field>` issues for every group member, with a
+local group label, minimum accepted pair scores, the current value and references
+for each distinct value. They appear in the existing HTML/CSV/JSON reports and
+catalog issue counts. Tag comparison trims outer whitespace, remains case-sensitive,
+and treats absent/blank values as equivalent. The first-value tag policy still
+applies. Group labels are deterministic for the same paths/membership, not permanent
+IDs across renames or regrouping. No copy is treated as authoritative.
+
+Matching/field/severity edits regroup cached fingerprints without decoding audio.
+New or changed files, failed fingerprints, decoder/extraction-version changes and
+`--full-scan` trigger decoding. Empty `fields: []` also disables this feature.
+Schema 2 adds an independent fingerprint cache without discarding metadata or
+changing its parser version; enabling the feature on an existing cache needs no
+metadata refresh. Removed/changed paths invalidate old fingerprints even when
+audio matching is disabled.
+
+Tracks shorter than 10 seconds, fingerprints with fewer than 32 frames or fewer
+than eight distinct words, and decoding failures produce `audio_fingerprint_error`
+warnings, separate from metadata `read_error`. They are excluded from matching
+and retried next run. Extraction has a 300-second per-track timeout and a maximum
+24-hour track length. Duration comes from decoded samples, including FLAC with
+unknown header duration. Successful fingerprinting is not an audio-integrity test.
+
+At similarity thresholds of 0.95 or higher, an indexed audio-landmark search and
+duration filtering find candidates. Lower thresholds use all duration-compatible
+candidates to preserve recall and can be much slower. SQLite holds the temporary
+search projection; Python retains group memberships and current comparisons.
+Large-library CPU/disk use and Synology deployment still need field testing.
+Details and bounds are in `docs/RULES.md`.
+
+The implementation calls [Chromaprint's fpcalc](https://acoustid.org/chromaprint)
+directly with raw JSON output. Its local comparison uses the same two-bit word
+tolerance as [pyacoustid](https://github.com/beetbox/pyacoustid), with explicit
+duration/coverage checks and conservative grouping; pyacoustid and its HTTP client
+are not required dependencies.
 
 ## Verification
 
@@ -183,7 +290,10 @@ Tests include real synthetic
 MP3 and FLAC fixtures and subprocess CLI scans, Unicode metadata, cache reuse,
 YAML-only changes, custom disc patterns, migration, interruption, traversal/read
 failures, concurrent ownership, unsafe outputs, and report publication failures.
-Fixture audio is copied to temporary directories; FFmpeg is not needed for tests.
+Fixture audio is copied to temporary directories. Most tests need no FFmpeg;
+the real audio-identity integration test creates synthetic MP3/FLAC with FFmpeg
+and requires `fpcalc`. Install `libchromaprint-tools ffmpeg` to run that test;
+it is skipped when either is absent. CI installs both tools.
 Source content hashes, sizes and modification times are checked across scans.
 
 ## Safety and edge cases
@@ -207,12 +317,14 @@ inherit defaults; empty `required_tags: []` and `artwork: {required: false}`
 explicitly disable those checks. Unknown keys, null sections, duplicate YAML keys,
 invalid regexes and unsupported template syntax are errors. See `docs/RULES.md`.
 
-An unversioned baseline database is migrated transactionally to schema 1 without
-dropping tracks. Its parser-version marker starts at zero, causing a one-time
+An unversioned baseline database is migrated transactionally through schema 1 to
+schema 2 without dropping tracks. Its parser-version marker starts at zero, causing a one-time
 metadata refresh on the first successful upgraded scan. Future parser-version
 changes also trigger metadata refresh; ordinary YAML edits do not. Back up an
 existing database before upgrading; an older binary must not reuse the migrated
-database. Unsupported future schema versions are refused.
+database. Unsupported future schema versions are refused. Schema-1 caches upgrade
+to schema 2 by adding the audio fingerprint table; that upgrade alone does not
+refresh tag metadata or require audio decoding while the feature is disabled.
 
 Parser version 3 refreshes older cached metadata once to include MP3 lyricist,
 original lyricist and compilation tags, and FLAC original-lyricist aliases.

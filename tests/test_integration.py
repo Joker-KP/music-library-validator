@@ -125,7 +125,7 @@ def test_cross_album_aliases_cached_rules_and_all_reports(tmp_path):
         options["artist_alias_groups"] = []
         scan_and_check(0)
     with sqlite3.connect(tmp_path / "cache.sqlite") as con:
-        assert con.execute("PRAGMA user_version").fetchone()[0] == database.SCHEMA_VERSION == 1
+        assert con.execute("PRAGMA user_version").fetchone()[0] == database.SCHEMA_VERSION
         assert not con.execute(
             "SELECT name FROM sqlite_master WHERE name='cross_album_tracks'"
         ).fetchall()

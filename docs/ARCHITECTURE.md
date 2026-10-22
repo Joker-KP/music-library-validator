@@ -2,7 +2,7 @@
 
 ## Processing pipeline
 
-`validated config -> output preflight/ownership locks -> descriptor discovery -> stat cache lookup -> Mutagen normalization -> SQLite transaction -> validation (track + album) -> cache commit -> atomic HTML/CSV/JSON publication`
+`validated config -> output preflight/ownership locks -> count-only descriptor discovery -> SQLite transaction -> processing discovery (cache/metadata + optional fingerprints) -> validation -> cache commit -> atomic HTML/CSV/JSON publication`
 
 SQLite is a **cache of source-file metadata**, not the source of truth.
 `config.py`, `safety.py`, `scanner.py`, `metadata.py`, `database.py`, `validation.py`
@@ -16,6 +16,51 @@ metadata and compares one identity group at a time, independently of Mutagen.
 to whole MB. Rendering adds consecutive row numbers and per-album counts from
 the emitted validation issues, leaving zero counts blank in all catalog formats.
 `cli.py` coordinates them.
+
+The CLI performs two filesystem traversals. `scanner.count_files` streams the same
+filtered, symlink-safe descriptor discovery without opening audio or retaining
+paths; it runs before opening the cache transaction. `scanner.scan` then processes
+each file's metadata and optional fingerprint cache in one discovery traversal,
+including directory-size aggregation. A callback advances once per completed file,
+including cache hits and explicit read/fingerprint errors. The count is an estimate:
+the CLI reports changes between traversals rather than trusting an obsolete list.
+
+`progress.py` owns display and time estimation on stderr. Scanning and audio rules
+accept optional callbacks and do not print. Phase contexts distinguish counting,
+file analysis, tag validation, cross-album rules, audio indexing/matching and report
+publication. Terminal redraws are limited to five per second; nonterminal logs to
+one line per ten seconds, plus starts/completions/failures. Completion is emitted
+only on successful phase exit; interrupted/error phases end with a failed marker.
+`--no-progress` disables display without changing scan/cache/report behavior.
+
+Optional audio identity runs after metadata validation and before cache commit.
+`fingerprints.py` invokes full-track Chromaprint algorithm 2 on a verified read-only
+descriptor with a forced audio format. `scanner._scan_audio_track` independently checks
+fingerprint signatures/backend versions, so enabling audio analysis on a populated
+metadata cache does not reparse tags. It uses the same descriptor-based discovery
+and pre/post read signatures; unsafe changes abort or produce explicit audio errors.
+Fingerprint work is skipped when disabled or the field list is empty. A backend
+version check occurs before writable output initialization. No online service is used.
+
+`audio_identity.py` compares normalized raw fingerprint words with duration and
+coverage gates, then emits tag conflicts. Its `landmarks` function provides audio
+keys to `database.AudioIndex`, which builds connection-local SQLite projections
+and indexes. At thresholds >=0.95, nine combinations of disjoint parts of adjacent
+32-bit words retrieve candidates; every fourth pair is indexed and all pairs are
+queried. Accepted pairs have >=32 overlapping frames and sufficiently many adjacent
+two-bit-tolerant matches for this sampling to retain a candidate. Relaxed thresholds
+use duration-filtered exhaustive candidates to avoid recall loss. Comparison votes
+for alignments from full landmarks (or exhaustively searches offsets below 0.75),
+and accepts only an alignment meeting both configured score and coverage thresholds.
+
+Grouping is deterministic greedy complete-link: sorted paths, first compatible
+group, all existing members must match. No similarity-chain union is performed.
+Python retains path memberships, current comparisons and the current report group;
+SQLite holds fingerprints and compared tag values. Common/similar audio and relaxed
+thresholds can still require quadratic comparisons, and very repetitive fingerprints
+can create many alignment votes. No large-library performance claim is made.
+Groups are independent of directory albums; conflicts use the existing issue schema
+and catalog counts. Local labels hash sorted paths and are not canonical audio IDs.
 
 Configuration changes revalidate all indexed metadata each run. Derived date/year
 normalization runs both during parsing and on cached tags before validation:
@@ -51,6 +96,17 @@ without `executescript` implicit commits. A single transaction includes migratio
 scope binding, metadata updates, successful scan counters and generation-based
 pruning. Any discovery/validation failure rolls back. `scans` stores completed
 cache-scan summaries; there is no issue-history/delta table.
+
+Schema 2 transactionally adds `audio_fingerprints` (path, size, mtime_ns,
+backend/extraction version, decoded duration, raw fingerprint JSON, error), preserving
+schema-1 metadata and parser version 5. Matching configuration is not stored in the
+fingerprint signature: changing fields, severity, duration tolerance, coverage or
+similarity revalidates cached audio without decoding. Changed/removed tracks prune
+stale fingerprints even while disabled. New/stale/failed entries, backend-version
+changes and full scans decode again. Fingerprint failures are separate from metadata
+errors and do not discard valid tags. Audio updates and comparisons join the existing
+scan transaction and publication guarantees. Neither partial fingerprints nor
+nonzero decoder exits are treated as valid audio identities.
 
 Cache scope records the canonical root, root device/inode and extensions. Different
 scopes and future schemas are refused. Legacy rows must all fit the requested

@@ -86,3 +86,14 @@ cross_album_rules:
   artist_alias_groups:
     - [Wolna Grupa Bukowina, Wojciech Bellon]
     - [U Pana Boga za Piecem, Sylwek Szweda, Towarzystwo Wzajemnej Adoracji]
+
+# Opt in to full-track local decoding (fpcalc/libchromaprint-tools required).
+# Set enabled: true to compare tags on copies matched by audio alone.
+audio_identity_rules:
+  enabled: true
+  fields: [title, artist, composer]
+  severity: warning
+  matching:
+    similarity_threshold: 0.70
+    duration_tolerance_seconds: 3.0
+    minimum_coverage: 0.80

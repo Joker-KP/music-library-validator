@@ -1,5 +1,6 @@
 """Validate the declarative configuration before opening any writable outputs."""
 
+import math
 import re
 from collections import defaultdict
 from copy import deepcopy
@@ -24,6 +25,16 @@ DEFAULTS = {
         "allowed_chars": DEFAULT_ALLOWED_CHARS,
     },
     "custom_rules": [],
+    "audio_identity_rules": {
+        "enabled": False,
+        "fields": ["title", "artist", "composer"],
+        "severity": "warning",
+        "matching": {
+            "similarity_threshold": 0.95,
+            "duration_tolerance_seconds": 2.0,
+            "minimum_coverage": 0.90,
+        },
+    },
     "cross_album_rules": {
         "enabled": True,
         "severity": "warning",
@@ -173,6 +184,34 @@ def check_cross_album_rules(options):
             seen.add(name)
 
 
+def check_audio_identity_rules(options):
+    if type(options["enabled"]) is not bool:
+        raise ValueError("audio_identity_rules.enabled must be a boolean")
+    if options["severity"] not in ("info", "warning", "error"):
+        raise ValueError("audio_identity_rules.severity must be info, warning or error")
+    fields = options["fields"]
+    if not isinstance(fields, list):
+        raise ValueError("audio_identity_rules.fields must be a list")  # noqa: TRY004
+    for field in fields:
+        _name(field, "audio_identity_rules.fields entry")
+    if len(fields) != len(set(fields)):
+        raise ValueError("audio_identity_rules.fields must not contain duplicate names")
+    for name, value in options["matching"].items():
+        try:
+            finite = type(value) in (int, float) and math.isfinite(value)
+        except OverflowError:
+            finite = False
+        if not finite:
+            raise ValueError(f"audio_identity_rules.matching.{name} must be a finite number")
+        if name == "duration_tolerance_seconds":
+            valid = value >= 0
+        else:
+            valid = 0 < value <= 1
+        if not valid:
+            bounds = "nonnegative" if name == "duration_tolerance_seconds" else "in (0, 1]"
+            raise ValueError(f"audio_identity_rules.matching.{name} must be {bounds}")
+
+
 def load_config(path: Path) -> dict:
     data = yaml.load(path.read_text(encoding="utf-8"), Loader=ConfigLoader)
     _object(data, set(DEFAULTS) | {"library_root"}, "configuration")
@@ -180,9 +219,20 @@ def load_config(path: Path) -> dict:
         raise ValueError("library_root must be a nonempty path string")
     config = deepcopy(DEFAULTS)
     for key, value in data.items():
-        if key in ("artwork", "filename", "album_rules", "cross_album_rules"):
+        if key in (
+            "artwork",
+            "filename",
+            "album_rules",
+            "cross_album_rules",
+            "audio_identity_rules",
+        ):
             _object(value, set(DEFAULTS[key]), key)
-            config[key].update(value)
+            for option, setting in value.items():
+                if key == "audio_identity_rules" and option == "matching":
+                    _object(setting, set(DEFAULTS[key][option]), "audio_identity_rules.matching")
+                    config[key][option].update(setting)
+                else:
+                    config[key][option] = setting
         else:
             config[key] = value
     extensions = config["extensions"]
@@ -208,6 +258,7 @@ def load_config(path: Path) -> dict:
         if type(value) is not bool:
             raise ValueError(f"album_rules.{key} must be a boolean")
     check_cross_album_rules(config["cross_album_rules"])
+    check_audio_identity_rules(config["audio_identity_rules"])
     fc = config["filename"]
     _regex(fc["regex"], "filename.regex", nullable=True)
     allowed_characters(fc["allowed_chars"])

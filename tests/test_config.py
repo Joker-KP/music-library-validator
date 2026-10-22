@@ -153,3 +153,63 @@ def test_cross_album_fields_accept_normalized_names_and_empty_list(tmp_path, fie
     path = tmp_path / "rules.yaml"
     path.write_text(yaml.safe_dump({"library_root": "/x", "cross_album_rules": {"fields": fields}}))
     assert load_config(path)["cross_album_rules"]["fields"] == fields
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        None,
+        [],
+        {"unknown": 1},
+        {"enabled": "yes"},
+        {"severity": "fatal"},
+        {"fields": None},
+        {"fields": "title"},
+        {"fields": ["Title"]},
+        {"fields": ["title", "title"]},
+        {"fields": [False]},
+        {"matching": None},
+        {"matching": []},
+        {"matching": {"unknown": 1}},
+        *[
+            {"matching": {key: value}}
+            for key in ["similarity_threshold", "minimum_coverage", "duration_tolerance_seconds"]
+            for value in [None, True, "0.95", [], float("nan"), float("inf"), -1, 10**1000]
+        ],
+        {"matching": {"similarity_threshold": 0}},
+        {"matching": {"similarity_threshold": 1.01}},
+        {"matching": {"minimum_coverage": 0}},
+        {"matching": {"minimum_coverage": 1.01}},
+    ],
+)
+def test_invalid_audio_identity_config_fails_before_outputs(tmp_path, options, capsys):
+    test_invalid_config_has_clear_cli_error(
+        tmp_path, {"library_root": "/x", "audio_identity_rules": options}, capsys
+    )
+
+
+def test_audio_identity_defaults_and_nested_partial_settings(tmp_path):
+    path = tmp_path / "rules.yaml"
+    path.write_text("library_root: /x\n")
+    defaults = load_config(path)["audio_identity_rules"]
+    assert defaults == {
+        "enabled": False,
+        "fields": ["title", "artist", "composer"],
+        "severity": "warning",
+        "matching": {
+            "similarity_threshold": 0.95,
+            "minimum_coverage": 0.9,
+            "duration_tolerance_seconds": 2.0,
+        },
+    }
+    path.write_text(
+        "library_root: /x\naudio_identity_rules:\n  matching:\n    similarity_threshold: 1\n"
+    )
+    assert load_config(path)["audio_identity_rules"]["matching"] == {
+        **defaults["matching"],
+        "similarity_threshold": 1,
+    }
+    path.write_text(
+        "library_root: /x\naudio_identity_rules: {enabled: true, fields: [], matching: {duration_tolerance_seconds: 0}}\n"
+    )
+    assert load_config(path)["audio_identity_rules"]["fields"] == []

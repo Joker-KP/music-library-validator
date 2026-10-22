@@ -258,6 +258,95 @@ album/path/rule/severity/message schema in all reports, and count in the catalog
 Field lists, aliases, severity and enablement re-evaluate cached metadata on every scan.
 No schema change, audio read or parser-version bump is required by this feature.
 
+## Audio identity rules
+
+`audio_identity_rules` compares tags among copies matched by local Chromaprint
+audio fingerprints. It does not depend on title, artist, aliases, filenames or
+album tags for matching. Copies in the same directory album, including CD1/CD2,
+are included. Directory-based album and catalog grouping remain unchanged.
+
+```yaml
+audio_identity_rules:
+  enabled: true
+  fields: [title, artist, composer]
+  severity: warning
+  matching:
+    similarity_threshold: 0.95
+    duration_tolerance_seconds: 2.0
+    minimum_coverage: 0.90
+```
+
+All settings are optional and inherit these values except `enabled`, whose default
+is **false**. Partial `matching` mappings inherit omitted keys individually.
+`enabled` must be boolean. `severity` is `info`, `warning`, or `error` and applies
+to tag conflicts. `fields` replaces the default list; it accepts unique lowercase
+normalized tag identifiers, including `title`, `artist`, `composer`, `lyricist`,
+`origlyricist` and `genre`. It cannot add unsupported ID3 frame readers. `[]`
+skips backend initialization, decoding and comparisons, even if enabled.
+
+| Matching option | Default | Validation and meaning |
+| --- | --- | --- |
+| `similarity_threshold` | `0.95` | Finite number in `(0, 1]`; minimum fraction of overlapping fingerprint words differing by at most two of 32 bits. |
+| `duration_tolerance_seconds` | `2.0` | Finite nonnegative number; maximum difference in decoded durations, inclusive. |
+| `minimum_coverage` | `0.90` | Finite number in `(0, 1]`; minimum overlap frame count divided by the longer fingerprint length, inclusive. |
+
+Booleans, strings, nulls, NaN/infinity, unknown keys and invalid ranges are rejected
+before output writes. No threshold is a probability. Fingerprints are aligned at
+integer fingerprint-frame offsets, with at least 32 overlapping frames regardless
+of configured coverage. Similarity and coverage must both pass at the same offset;
+the first qualifying offset in deterministic alignment-vote order is used.
+
+Groups are built in sorted path order. A new member must match every existing
+member; among compatible groups, the earliest representative path wins. Groups
+are disjoint and are not merged transitively. Consequently ambiguous chain matches
+may remain in different groups rather than report a speculative conflict. At
+thresholds >=0.95, a SQLite index of partial adjacent fingerprint words retrieves
+duration-compatible candidates without using tags. Every fourth adjacent pair is
+indexed; the query uses all adjacent pairs. Within two bit errors per word, at
+least one of three disjoint word parts is unchanged; nine two-word combinations
+cover both words. With >=32 overlapping frames and >=0.95 similarity, at least
+one indexed pair survives. Lower thresholds fall back to all duration-compatible
+candidates; below 0.75 comparison also enumerates all feasible frame alignments.
+Low thresholds and collections of very similar audio can require quadratic work.
+
+For each differing configured field, emit `audio_identity_<field>` for every group
+member. Compare trimmed tag strings case-sensitively, with absent/empty/whitespace
+equivalent. Each message contains a deterministic local group label, group size,
+minimum accepted pair similarity and coverage, current value and one representative
+path for every distinct value. Labels hash sorted member paths; renames, membership
+or matching changes can change them. They are not universal audio IDs. All issue
+formats preserve the same multiline message and include conflicts in catalog counts.
+
+Unusable audio produces `audio_fingerprint_error` at warning severity, independently
+of the configured conflict severity and metadata readability. A track must decode
+successfully, be at least 10 seconds long and yield at least 32 fingerprint frames
+and eight distinct words. These checks exclude silence/nearly constant audio and
+short/empty fingerprints conservatively. Metadata-error tracks retain their own
+diagnostics and are excluded from tag comparison. Decode failures/low-information
+results are retried on subsequent enabled scans. No automatic fixes occur.
+
+Extraction uses fpcalc algorithm 2, raw full-track fingerprints and decoded sample
+durations, not its default 120-second excerpt. One chunk of up to 24 hours ensures
+unknown/zero duration headers still work; longer inputs are explicitly rejected.
+Each decoder process has a 300-second timeout. Incomplete/nonzero-exit output is
+rejected. Reading successful audio does not certify stream integrity. The backend
+receives only a verified read-only file descriptor and a forced MP3/FLAC demuxer.
+
+The optional dependency is `fpcalc` (`libchromaprint-tools` on Ubuntu), included in
+the Docker image. There are no online lookups or API keys. Missing/nonfunctional
+fpcalc fails before writable outputs are created. SQLite schema 2 stores raw words,
+duration, size/mtime signature, backend/settings version and failure status in
+`audio_fingerprints`. It preserves all cached tag metadata and its parser version.
+Fingerprints and issue generation share the scan transaction: interruptions roll
+back, and publication retains the existing complete-generation behavior.
+
+Field/severity/matching changes re-evaluate cached fingerprints without decoding.
+Changed files, absent/failed entries, fpcalc/decoder/extraction-version changes and
+`--full-scan` refresh fingerprints. Removed or changed paths prune stale audio cache
+entries on all scans, including when the feature is disabled. Like the metadata
+cache, external changes preserving size and nanosecond mtime require `--full-scan`.
+Renames are not detected as moves. No issue history is added.
+
 ## Intended future rule syntax
 
 - Richer Boolean conditions (OR/negation) and numeric comparisons

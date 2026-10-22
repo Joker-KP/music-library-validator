@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PARSER_VERSION = 5
 
 
@@ -38,7 +38,13 @@ def connect(path: Path):
                 id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 finished_at TEXT, files_seen INTEGER, files_read INTEGER, errors INTEGER)""")
             conn.execute("CREATE TABLE cache_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        if version < 2:
+            conn.execute("""CREATE TABLE audio_fingerprints (
+                path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+                backend_version TEXT NOT NULL, duration REAL, fingerprint_json TEXT,
+                error TEXT
+            )""")
+        conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         return conn
     except BaseException:
         conn.rollback()
@@ -106,6 +112,129 @@ def iter_rows(conn):
 
 def rows(conn):
     return list(iter_rows(conn))
+
+
+def audio_fingerprint(conn, path):
+    return conn.execute("SELECT * FROM audio_fingerprints WHERE path=?", (str(path),)).fetchone()
+
+
+def save_audio_fingerprint(conn, path, info, version, duration, fingerprint, error):
+    conn.execute(
+        """INSERT INTO audio_fingerprints VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
+        backend_version=excluded.backend_version,duration=excluded.duration,
+        fingerprint_json=excluded.fingerprint_json,error=excluded.error""",
+        (
+            str(path),
+            info.st_size,
+            info.st_mtime_ns,
+            version,
+            duration,
+            json.dumps(fingerprint) if fingerprint is not None else None,
+            error,
+        ),
+    )
+
+
+def prune_audio_fingerprints(conn):
+    conn.execute("""DELETE FROM audio_fingerprints WHERE NOT EXISTS (
+        SELECT 1 FROM tracks WHERE tracks.path=audio_fingerprints.path
+        AND tracks.size=audio_fingerprints.size AND tracks.mtime_ns=audio_fingerprints.mtime_ns
+    )""")
+
+
+def iter_audio_rows(conn):
+    for row in conn.execute("""SELECT tracks.*,audio_fingerprints.duration,
+        audio_fingerprints.fingerprint_json,audio_fingerprints.error AS fingerprint_error
+        FROM tracks JOIN audio_fingerprints USING(path) ORDER BY tracks.path"""):
+        yield dict(row)
+
+
+class AudioIndex:
+    """Connection-local audio search projection; tags never influence candidates."""
+
+    def __init__(self, conn, rows, fields):
+        from .audio_identity import landmarks
+
+        self.conn = conn
+        self.count = 0
+        conn.execute("""CREATE TEMP TABLE audio_candidates (
+            path TEXT PRIMARY KEY, album_dir TEXT NOT NULL, duration REAL NOT NULL,
+            fingerprint_json TEXT NOT NULL, values_json TEXT NOT NULL
+        )""")
+        conn.execute("""CREATE TEMP TABLE audio_landmarks (
+            token INTEGER NOT NULL, path TEXT NOT NULL,
+            PRIMARY KEY(token,path)
+        ) WITHOUT ROWID""")
+        for row in rows:
+            tags = row["metadata"].get("tags", {})
+            conn.execute(
+                "INSERT INTO audio_candidates VALUES(?,?,?,?,?)",
+                (
+                    row["path"],
+                    row["album_dir"],
+                    row["duration"],
+                    json.dumps(row["fingerprint"]),
+                    json.dumps(
+                        {field: tags.get(field, "").strip() for field in fields}, ensure_ascii=False
+                    ),
+                ),
+            )
+            # Keep every fourth adjacent pair. At >=.95 similarity and >=32
+            # overlapping frames at least one of these pairs must survive.
+            tokens = {
+                token for token, position in landmarks(row["fingerprint"]) if position % 4 == 0
+            }
+            conn.executemany(
+                "INSERT INTO audio_landmarks VALUES(?,?)",
+                ((token, row["path"]) for token in sorted(tokens)),
+            )
+            self.count += 1
+
+    @staticmethod
+    def _decode(row):
+        row = dict(row)
+        row["fingerprint"] = json.loads(row.pop("fingerprint_json"))
+        row["values"] = json.loads(row.pop("values_json"))
+        return row
+
+    def rows(self):
+        for row in self.conn.execute("SELECT * FROM audio_candidates ORDER BY path"):
+            yield self._decode(row)
+
+    def get(self, path):
+        return self._decode(
+            self.conn.execute("SELECT * FROM audio_candidates WHERE path=?", (path,)).fetchone()
+        )
+
+    def candidate_paths(self, row, matching):
+        from .audio_identity import landmarks
+
+        tolerance = matching["duration_tolerance_seconds"]
+        limits = (row["path"], row["duration"] - tolerance, row["duration"] + tolerance)
+        if matching["similarity_threshold"] < 0.95:
+            for found in self.conn.execute(
+                "SELECT path FROM audio_candidates WHERE path<? AND duration BETWEEN ? AND ? ORDER BY path",
+                limits,
+            ):
+                yield found[0]
+            return
+        tokens = sorted({token for token, _ in landmarks(row["fingerprint"])})
+        found = set()
+        # Bound parameters for SQLite builds with the older 999-variable limit.
+        for start in range(0, len(tokens), 400):
+            batch = tokens[start : start + 400]
+            placeholders = ",".join("?" for _ in batch)
+            found.update(
+                item[0]
+                for item in self.conn.execute(
+                    f"""SELECT DISTINCT c.path FROM audio_landmarks AS l
+                JOIN audio_candidates AS c ON c.path=l.path
+                WHERE c.path<? AND c.duration BETWEEN ? AND ? AND l.token IN ({placeholders})""",
+                    (*limits, *batch),
+                )
+            )
+        yield from sorted(found)
 
 
 def iter_cross_album_rows(conn, candidates):
