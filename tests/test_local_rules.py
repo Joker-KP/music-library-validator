@@ -71,7 +71,14 @@ def test_patch_merging_order_replacement_and_parent_isolation():
     [
         None,
         [],
-        {"filename": {}},
+        {"filename": None},
+        {"filename": {"regex": "["}},
+        {"filename": {"regex": True}},
+        {"filename": {"regex": 123}},
+        {"filename": {"regex": "a" * 4097}},
+        {"filename": {"pattern": ".*"}},
+        {"filename": {"allowed_chars": ""}},
+        {"filename": {"match_template": None}},
         {"library_root": "/elsewhere"},
         {"required_tags": []},
         {"audio_integrity": {"enabled": True}},
@@ -114,6 +121,69 @@ def test_nested_directories_without_audio_and_sibling_isolation(tmp_path):
     assert local.for_directory(root / "艺术家/Album/CD2")["required_tags"][-1] == "comment"
     with pytest.raises(ValueError, match="outside"):
         local.for_directory(tmp_path)
+
+
+def test_filename_regex_patch_preserves_other_settings_and_parent():
+    parent = base_config()
+    parent["filename"]["allowed_chars"] = "[]0-9a-zA-Z -()Łóź"
+    parent["filename"]["match_template"] = "{tracknumber:02d} - {title}"
+    before = deepcopy(parent)
+    result = apply_patch(parent, {"filename": {"regex": r"^\d{1,3} - .+$"}})
+    assert result["filename"] == {**parent["filename"], "regex": r"^\d{1,3} - .+$"}
+    assert parent == before
+    assert apply_patch(result, {"filename": {}}) == result
+    assert apply_patch(result, {"filename": {"regex": None}})["filename"]["regex"] is None
+
+
+def test_cached_filename_regex_inheritance_disc_overrides_and_removal(
+    tmp_path, library, config_file
+):
+    mp3 = next(library.rglob("*.mp3"))
+    flac = next(library.rglob("*.flac"))
+    sibling = library / "Other" / mp3.name
+    sibling.parent.mkdir()
+    shutil.copyfile(mp3, sibling)
+    before = signatures(library)
+    config_file.write_text(
+        yaml.safe_dump(
+            {
+                "library_root": str(library),
+                "required_tags": [],
+                "artwork": {"required": False},
+                "filename": {"regex": "^never$", "allowed_chars": ""},
+                "cross_album_rules": {"enabled": False},
+            }
+        )
+    )
+    db, reports = tmp_path / "cache.sqlite", tmp_path / "reports"
+
+    def scan(expected):
+        cli.run(config_file, db, reports, show_progress=False)
+        issues = json.loads((reports / "report.json").read_text())["issues"]
+        assert {i["path"] for i in issues if i["rule"] == "filename_pattern"} == {
+            str(path) for path in expected
+        }
+        with (reports / "issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+            assert list(csv.DictReader(stream)) == issues
+        html = (reports / "index.html").read_text()
+        assert html.count("filename_pattern") == len(expected)
+
+    scan([mp3, flac, sibling])
+    artist = mp3.parent.parent.parent
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        artist_patch = write_patch(artist, {"filename": {"regex": r"^\d{2} - Łódź$"}})
+        scan([sibling])
+        disc_patch = write_patch(flac.parent, {"filename": {"regex": r"^\d{3} - .+$"}})
+        scan([flac, sibling])
+        write_patch(flac.parent, {"filename": {"regex": None}})
+        scan([sibling])
+        write_patch(artist, {"filename": {"regex": "^different$"}})
+        scan([mp3, sibling])
+        disc_patch.unlink()
+        scan([mp3, flac, sibling])
+        artist_patch.unlink()
+        scan([mp3, flac, sibling])
+    assert signatures(library) == before
 
 
 def test_album_rules_rejected_in_collapsed_disc_folder(tmp_path):
@@ -159,6 +229,9 @@ def test_nonregular_local_configs_rejected_before_outputs(tmp_path, library, con
         "",
         "{}\nunknown: true",
         "added_required_tags: [Title]",
+        "filename: {regex: '['}",
+        "filename: {regex: true}",
+        "filename: {regex: '.*', regex: null}",
     ],
 )
 def test_invalid_yaml_reports_source_before_outputs(tmp_path, library, config_file, contents):

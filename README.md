@@ -275,6 +275,8 @@ removed_required_tags: [year]
 removed_custom_rules: [comment_has_origlyricist]
 artwork:
   required: false
+filename:
+  regex: '^\d{1,3} - .+$'
 album_rules:
   consistent_artwork: false
 ```
@@ -288,7 +290,11 @@ Optional artwork still has its dimensions checked when present: set both
 Track settings can differ between CD1/CD2. Album checks always use settings at
 the canonical album directory and compare all its discs; `album_rules` inside a
 collapsed disc directory is rejected with the proper album location.
-Filename, cross-album, integrity and identity settings remain global. Dedicated
+`filename.regex` can be overridden in any folder, including CD1/CD2; use null
+to disable that pattern check for the folder and descendants. Patterns match
+the filename stem without its extension. `filename.allowed_chars` and
+`filename.match_template` remain global and apply independently. Cross-album,
+integrity and identity settings remain global. Dedicated
 audio modes validate local YAML but skip its metadata checks as usual.
 
 Local edits, additions and deletions revalidate cached metadata without rereading

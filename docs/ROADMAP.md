@@ -25,6 +25,9 @@
 
 ## P1 — quality features
 
+- Completed: folder-specific filename regex overrides, including disabling the
+  pattern check, with inherited/disc-folder settings and cached revalidation.
+
 - Completed: hierarchical directory `rules.yaml` patches for required tags,
   custom rules, artwork and album checks, with strict preflight, cached
   revalidation, deterministic inheritance, disc-scope errors and change rollback.

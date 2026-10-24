@@ -17,6 +17,7 @@ PATCH_KEYS = {
     "removed_custom_rules",
     "artwork",
     "album_rules",
+    "filename",
 }
 
 
@@ -52,9 +53,10 @@ def apply_patch(parent, patch):
     effective["custom_rules"] = [
         rule for rule in effective["custom_rules"] if rule["id"] not in removed_rules
     ] + deepcopy(added_rules)
-    for section in ("artwork", "album_rules"):
+    for section in ("artwork", "album_rules", "filename"):
         if section in patch:
-            _object(patch[section], set(parent[section]), f"local {section}")
+            allowed = {"regex"} if section == "filename" else set(parent[section])
+            _object(patch[section], allowed, f"local {section}")
             effective[section].update(patch[section])
     # Reuse the main schema for types, unique IDs, conditions and template safety.
     return validate_config(effective)

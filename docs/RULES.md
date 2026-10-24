@@ -76,7 +76,7 @@ without audio files still contribute patches. Descendants inherit accumulated
 settings rather than resetting to the main configuration. Siblings do not affect
 each other. `{}` is a valid no-op; an empty file or null is an error.
 
-Only these six keys are accepted locally:
+Only these seven keys are accepted locally:
 
 | Key | Meaning |
 | --- | --- |
@@ -86,6 +86,7 @@ Only these six keys are accepted locally:
 | `added_custom_rules` | Append full definitions with the same syntax, conditions and validation as main `custom_rules`. |
 | `artwork` | Override supplied `required`, `min_width`, `min_height` keys; inherit omitted keys. |
 | `album_rules` | Override supplied album-check booleans; inherit omitted keys. See scope below. |
+| `filename` | Override `regex` only; omit it to inherit, or use null to disable the pattern check. |
 
 Omitted list keys mean `[]`, changing nothing. Lists must have the correct types;
 tag/ID lists must contain unique lowercase identifiers. Adding and removing the
@@ -100,6 +101,15 @@ its ID in `removed_custom_rules` and its complete new definition in
 append in YAML order. A descendant may reintroduce a removed rule by supplying
 its full definition. Removing an ID already removed by an ancestor is an error.
 These IDs refer only to custom rules; they cannot suppress built-in checks.
+
+Local `filename.regex` uses the same syntax and validation as the main setting:
+a nonempty regex of at most 4096 characters, or null to disable it. It matches the
+whole filename stem without the extension. For example, the patch below accepts
+one to three track-number digits. It applies to the directory and descendants;
+deeper patches override it and sibling directories keep their inherited pattern.
+It is valid inside collapsed disc folders such as CD1/CD2. `filename: {}` inherits
+the current pattern. Local `filename.allowed_chars` and `filename.match_template`
+are rejected; those checks still use the main configuration and run independently.
 
 ```yaml
 added_required_tags: [composer]
@@ -116,6 +126,8 @@ artwork:
   required: false
   min_width: null
   min_height: null
+filename:
+  regex: '^\d{1,3} - .+$'
 album_rules:
   consistent_artwork: false
 ```
@@ -134,7 +146,7 @@ directory identified by the error. The global `disc_folder_pattern` determines
 which directories collapse. This scope also applies to `disc_number_mismatch`.
 
 Main-only keys such as `library_root`, `extensions`, `disc_folder_pattern`,
-`required_tags`, `custom_rules`, `filename`, `cross_album_rules`,
+`required_tags`, `custom_rules`, `cross_album_rules`,
 `audio_integrity` and `audio_identity_rules` are rejected locally. Cross-album
 and audio checks remain global. Dedicated audio modes still preflight local YAML
 in full, but do not execute its metadata checks.

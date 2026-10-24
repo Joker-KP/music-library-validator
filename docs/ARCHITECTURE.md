@@ -233,7 +233,7 @@ checked, including multiple APIC frames; no image pixels or music files are chan
 
 ## Validation execution
 
-`local_rules.py` owns the six-key patch grammar, inheritance and read-only
+`local_rules.py` owns the seven-key patch grammar, inheritance and read-only
 configuration snapshots. It reuses `config.py` schema/template checks on each
 effective configuration. Discovery calls its entry callback before audio or child
 directories, letting empty parent folders provide settings. Only directories with
@@ -252,8 +252,10 @@ atomic filesystem snapshot; late additions can be discovered on the next run.
 receives complete albums with settings effective at their canonical directory.
 `validate` composes and sorts both results. Local track overrides never partition
 album comparisons. Explicit album patches in collapsed disc directories are
-configuration errors using the configured disc pattern. Global filename,
-cross-album and audio settings remain unchanged. All modes validate local YAML,
+configuration errors using the configured disc pattern. Local `filename.regex`
+overrides merge per key, including null to disable the check, and can vary across
+disc folders. Filename character/template checks, cross-album and audio settings
+remain global. All modes validate local YAML,
 but dedicated audio modes continue skipping track and album metadata rules.
 
 Missing-tag, image presence/dimensions, filename regex and template rules run per track. Album consistency and duplicate disc/track run per album. Issues include album, path, rule ID, severity and text. Configured `album_rules` flags enable/disable checks. All rules are read-only.

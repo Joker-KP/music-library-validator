@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Allow folder-specific `rules.yaml` patches to override `filename.regex`,
+  including null to disable the pattern check. Overrides inherit down the
+  directory tree, support disc folders and revalidate cached tracks without
+  rereading audio. Other filename settings remain global.
+
 - Fix silently skipped MP3 artwork minimum-size checks by measuring every ID3
   APIC image header with Pillow, as for FLAC pictures. Undersized covers report
   `small_artwork`; unreadable image headers report `artwork_dimensions_unavailable`

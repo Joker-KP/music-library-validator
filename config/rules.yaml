@@ -73,7 +73,7 @@ custom_rules:
     field: title
     template:
       operator: regex
-      pattern: '(?is).*(?:zapowiedź|recytacja|wstęp|opowieść|wywiad).*'
+      pattern: '(?is).*(?:zapowiedź|recytacja|wstęp|opowieść|wywiad|monolog).*'
     severity: warning
   - id: instrumental_marked_in_title
     when: {field: lyricist, is_present: false}
