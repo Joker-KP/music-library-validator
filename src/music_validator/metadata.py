@@ -34,9 +34,9 @@ def normalize_date_tags(tags: dict[str, str]) -> None:
             tags["year"] = match[1]
 
 
-def _flac_artwork(data):
-    # FLAC PICTURE dimensions may be zero or stale. Read the encoded image
-    # header itself, without loading pixels or modifying the PICTURE block.
+def _artwork(data):
+    # ID3 APIC has no dimensions; FLAC PICTURE dimensions may be zero or stale.
+    # Read the encoded image header without loading pixels or modifying tags.
     artwork = {"width": None, "height": None, "sha256": hashlib.sha256(data).hexdigest()}
     try:
         with warnings.catch_warnings(), BytesIO(data) as source:
@@ -69,7 +69,7 @@ def read_metadata(path: Path, fileobj=None) -> dict:
         for key, value in audio.tags.items() if audio.tags else []:
             tags[key.lower()] = _first(value)
         for pic in audio.pictures:
-            art.append(_flac_artwork(pic.data))
+            art.append(_artwork(pic.data))
     elif suffix == ".mp3":
         try:
             audio = ID3(source)
@@ -97,10 +97,7 @@ def read_metadata(path: Path, fileobj=None) -> dict:
         if comments:
             tags["comment"] = _first(comments[0].text)
         for pic in audio.getall("APIC"):
-            # ID3 APIC doesn't carry dimensions. Pillow can optionally enrich these later.
-            art.append(
-                {"width": None, "height": None, "sha256": hashlib.sha256(pic.data).hexdigest()}
-            )
+            art.append(_artwork(pic.data))
         # Stream headers provide bitrate, not a full decoding/integrity check.
         # Keep usable ID3 tags even for tag-only files or unreadable MPEG headers.
         try:

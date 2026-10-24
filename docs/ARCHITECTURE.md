@@ -218,15 +218,18 @@ Parser version 5 maps MP3 ID3 `TCOM` to normalized `composer`, matching FLAC
 `COMPOSER`. Older cache entries refresh once automatically; the SQLite schema
 stays at 1. Later rule edits reuse the cached composer value.
 
-FLAC artwork dimensions come from the encoded image header read with Pillow,
-not the FLAC PICTURE block's declared width/height (which may be zero or stale).
+MP3 APIC and FLAC Picture artwork share an encoded-image-header reader using Pillow.
+APIC frames have no declared dimensions; FLAC PICTURE block dimensions may be zero
+or stale and are ignored in favor of the image header.
 Only image headers are read; pixels are not loaded. Unreadable/unsupported headers
 or image-size safety-limit failures normalize dimensions to null and include a
 `dimension_error`; track tags and the hash of original picture bytes are retained.
 Minimum-dimension rules emit `artwork_dimensions_unavailable` for that picture.
-MP3 APIC dimension measurement remains deferred. Parser version 2 forces a
-one-time metadata refresh to replace old cached zero dimensions; later parser
-versions include this correction as well.
+Parser version 2 introduced corrected FLAC dimensions. Parser version 6 adds MP3
+APIC dimensions and refreshes older cached metadata once, preserving the schema-4
+cache and independent fingerprint/integrity results. Later minimum-size rule edits
+revalidate cached dimensions without rereading audio. All embedded images are
+checked, including multiple APIC frames; no image pixels or music files are changed.
 
 ## Validation execution
 

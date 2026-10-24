@@ -16,7 +16,9 @@
   allowlists, with cached revalidation and Unicode opt-in.
 - Completed: FLAC image-header dimensions with Pillow, handling zero/stale PICTURE
   fields and explicit unavailable-dimension diagnostics; parser-version cache refresh.
-- Extend image-header measurement to MP3 APIC; full image-integrity checks remain optional future work.
+- Completed: MP3 APIC image-header dimensions, shared with FLAC Picture checks,
+  explicit unreadable-image diagnostics and automatic refresh of older metadata
+  caches. Full image-integrity checks remain optional future work.
 - Confirm permissions, mount behavior, resource use and Unicode behavior on actual
   Synology hardware. Local fixture tests cover Unicode and injected permission errors.
 - Added a Linux CI matrix for Python 3.11, 3.12 and 3.14; benchmark large-library scans.

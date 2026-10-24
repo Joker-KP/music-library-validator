@@ -342,7 +342,7 @@ Audio-based tag consistency is also available as an opt-in check; see below.
 
 Implemented: recursive file enumeration, ID3 and FLAC Vorbis Comment normalization via Mutagen, MP3 APIC / FLAC Picture detection, album directory grouping with disc suffixes, disc-folder fallback, missing field / cover / filename regex and allowed-character checks, optional filename template and conditional custom rules, lyricist/original-lyricist/compilation normalization, album/title and albumartist consistency options, duplicate `(disc, track)` detection, optional cover-hash consistency, SQLite incremental cache, read errors, and issue/catalog reports in HTML, CSV and JSON.
 
-Not implemented yet: MP3 cover image dimension measurement; externally supplied audio checksum manifests; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; reproducible locked dependencies; general structured logging and performance benchmarks.
+Not implemented yet: externally supplied audio checksum manifests; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; reproducible locked dependencies; general structured logging and performance benchmarks.
 
 ## Audio integrity (optional)
 
@@ -590,8 +590,7 @@ Source content hashes, sizes and modification times are checked across scans.
 - Cache's `(size, mtime_ns)` check can miss external edits that preserve both attributes; `--full-scan` forces metadata reread. No cryptographic change check is implemented.
 - Metadata parsing/read failures appear as `read_error`; absent ID3 headers produce missing-tag issues. Neither proves audio stream integrity; enable the separate integrity checks for full decoding.
 - Multiple MP3 comments: baseline chooses first COMM frame; language and description selection need a policy. FLAC tags may be multi-valued: baseline chooses first value.
-- MP3 cover dimensions are not currently measured; minimum dimension rule only applies where dimensions are available (FLAC).
-- FLAC dimensions are read from the embedded image header with Pillow, rather than the potentially zero or stale width and height declared in the PICTURE block. Valid 600×600 or 800×800 artwork with declared zero dimensions is measured correctly. Image headers that cannot be read safely yield `artwork_dimensions_unavailable` when minimum dimensions are enabled, rather than a misleading `small_artwork` issue. Pixel data is not fully decoded; this is not an image-integrity test.
+- MP3 APIC and FLAC Picture dimensions are read from every embedded image header with Pillow. Each dimension below its configured `artwork.min_width` or `min_height` produces `small_artwork`; equality passes, and 0 or null disables that dimension check. FLAC's potentially zero or stale declared dimensions are ignored. Image headers that cannot be read safely yield `artwork_dimensions_unavailable` when minimum dimensions are enabled. Pixel data is not fully decoded; this is not an image-integrity test.
 - Duplicate track detection uses `DISCNUMBER` when present and disc-folder number otherwise. Disagreements produce `disc_number_mismatch` by default; the tag remains authoritative.
 - Album root `library_root` holding tracks directly will group those tracks together. Non-disc nested folders are considered distinct albums.
 - Current HTML output includes local paths. Do not publicly serve reports without evaluating privacy exposure.
@@ -626,8 +625,10 @@ original lyricist and compilation tags, and FLAC original-lyricist aliases.
 Parser version 4 adds MP3 stream bitrate for catalog quality and refreshes older
 entries once; subsequent scans reuse it. Parser version 5 adds MP3 `TCOM` as
 `composer`, matching FLAC `COMPOSER`, and refreshes older entries once so
-composer rules also work with existing libraries. Parser version 2 introduced corrected
-FLAC artwork dimensions. No database
+composer rules also work with existing libraries. Parser version 6 measures MP3 APIC
+artwork dimensions, so minimum-size checks also apply to MP3s. Older metadata
+entries refresh automatically once on the next configured or identity scan.
+Parser version 2 introduced corrected FLAC artwork dimensions. No database
 deletion or `--full-scan` is necessary; later unchanged
 scans use the cache normally. Install updated dependencies with
 `pip install -e '.[dev]'`, or rebuild the Docker image, before running the upgraded

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from mutagen.flac import Picture
-from mutagen.id3 import ID3, TCMP, TCOM, TDRC, TEXT, TOLY, TYER
+from mutagen.id3 import APIC, ID3, TCMP, TCOM, TDRC, TEXT, TOLY, TYER
 from PIL import Image
 
 from music_validator import metadata
@@ -34,6 +34,76 @@ def image_bytes(size, format="PNG"):
     output = BytesIO()
     Image.new("RGB", size, color="navy").save(output, format=format)
     return output.getvalue()
+
+
+def mp3_with_artwork(data, version=4):
+    tags = ID3()
+    tags.add(APIC(encoding=3, mime="image/jpeg", type=3, data=data))
+    source = BytesIO()
+    tags.save(source, v2_version=version)
+    source.seek(0)
+    return source
+
+
+@pytest.mark.parametrize("version", [3, 4])
+@pytest.mark.parametrize("format", ["JPEG", "PNG"])
+@pytest.mark.parametrize("size", [(320, 600), (600, 320), (320, 240), (500, 500), (800, 800)])
+def test_mp3_apic_dimensions_and_minimum_checks(version, format, size):
+    data = image_bytes(size, format)
+    source = mp3_with_artwork(data, version)
+    original = source.getvalue()
+    result = metadata.read_metadata(Path("01 - Song.mp3"), fileobj=source)
+    artwork = result["artwork"][0]
+    assert (artwork["width"], artwork["height"]) == size
+    assert artwork["sha256"] == hashlib.sha256(data).hexdigest()
+    assert source.getvalue() == original
+    row = {"path": "/music/Album/01 - Song.mp3", "album_dir": "/music/Album", "metadata": result}
+    issues = validate([row], {"artwork": {"min_width": 500, "min_height": 500}})
+    assert [i["message"] for i in issues if i["rule"] == "small_artwork"] == [
+        f"Cover {dimension} {value} < 500"
+        for dimension, value in zip(("width", "height"), size)
+        if value < 500
+    ]
+
+
+@pytest.mark.parametrize("data", [b"", b"not an image", b"\x89PNG\r\n\x1a\n"])
+def test_mp3_unreadable_apic_reports_unknown_dimensions(data):
+    result = metadata.read_metadata(Path("01 - Song.mp3"), fileobj=mp3_with_artwork(data))
+    artwork = result["artwork"][0]
+    assert artwork["width"] is artwork["height"] is None
+    assert artwork["dimension_error"]
+    row = {"path": "/music/Album/01 - Song.mp3", "album_dir": "/music/Album", "metadata": result}
+    for config in ({"min_width": 500}, {"min_height": 500}):
+        assert [i["rule"] for i in validate([row], {"artwork": config})] == [
+            "artwork_dimensions_unavailable"
+        ]
+    assert not validate([row], {"artwork": {"min_width": 0, "min_height": None}})
+
+
+def test_mp3_measures_every_apic_without_loading_pixels(monkeypatch):
+    tags = ID3()
+    for description, size in [("front", (800, 800)), ("back", (320, 240))]:
+        tags.add(APIC(desc=description, mime="image/jpeg", data=image_bytes(size, "JPEG")))
+    source = BytesIO()
+    tags.save(source)
+    source.seek(0)
+
+    def no_pixel_load(*args, **kwargs):
+        raise AssertionError("Artwork dimension checks must not load pixels")
+
+    monkeypatch.setattr(Image.Image, "load", no_pixel_load)
+    result = metadata.read_metadata(Path("01 - Song.mp3"), fileobj=source)
+    assert sorted((p["width"], p["height"]) for p in result["artwork"]) == [(320, 240), (800, 800)]
+
+
+@pytest.mark.parametrize("limit", [10, 60])
+def test_mp3_image_size_safety_limit_preserves_tags(monkeypatch, limit):
+    source = mp3_with_artwork(image_bytes((10, 10)))
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", limit)
+    result = metadata.read_metadata(Path("01 - Song.mp3"), fileobj=source)
+    assert result["format"] == "mp3"
+    assert result["artwork"][0]["width"] is None
+    assert result["artwork"][0]["dimension_error"]
 
 
 @pytest.mark.parametrize("format", ["JPEG", "PNG"])

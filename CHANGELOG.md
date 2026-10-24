@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fix silently skipped MP3 artwork minimum-size checks by measuring every ID3
+  APIC image header with Pillow, as for FLAC pictures. Undersized covers report
+  `small_artwork`; unreadable image headers report `artwork_dimensions_unavailable`
+  when a minimum is enabled. Parser version 6 refreshes older metadata caches once
+  automatically; no cache deletion or full scan is required. Music stays read-only.
+
 - Add collapsed **Library maintenance** with typed `FRESH START` confirmation.
   Archive the active SQLite cache/sidecars and all report families into unique
   timestamped subfolders, preserve music/configuration/previous archives and lock

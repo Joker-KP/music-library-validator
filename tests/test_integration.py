@@ -14,7 +14,7 @@ import pytest
 import yaml
 from conftest import signatures
 from mutagen.flac import FLAC, Picture
-from mutagen.id3 import ID3, TALB, TCOM, TDRC, TEXT, TIT2, TPE1
+from mutagen.id3 import APIC, ID3, TALB, TCOM, TDRC, TEXT, TIT2, TPE1
 from PIL import Image
 
 from music_validator import cli, database, scanner
@@ -498,6 +498,71 @@ def test_disc_suffix_and_character_rule_revalidate_cached_metadata(tmp_path, lib
     assert signatures(library) == before
     with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
         assert list(csv.DictReader(stream)) == report(tmp_path)["issues"]
+
+
+def test_mp3_artwork_refreshes_old_cache_and_revalidates_minima(tmp_path, library, config_file):
+    source = BytesIO(next(library.rglob("*.mp3")).read_bytes())
+    tags = ID3(source)
+    output = BytesIO()
+    Image.new("RGB", (320, 240)).save(output, format="JPEG")
+    tags.add(APIC(encoding=3, mime="image/jpeg", type=3, data=output.getvalue()))
+    tags.save(source)
+    path = library / "Artwork" / "01 - Small.mp3"
+    path.parent.mkdir()
+    path.write_bytes(source.getvalue())  # New synthetic fixture only.
+    before = signatures(library)
+    config = yaml.safe_load(config_file.read_text())
+    config["artwork"] = {"required": False, "min_width": 500, "min_height": 500}
+    config_file.write_text(yaml.safe_dump(config))
+    run_scan(tmp_path, config_file)
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        raw = con.execute("SELECT metadata_json FROM tracks WHERE path=?", (str(path),)).fetchone()[
+            0
+        ]
+        old = json.loads(raw)
+        old["artwork"][0].update(width=None, height=None)
+        con.execute(
+            "UPDATE tracks SET parser_version=5, metadata_json=? WHERE path=?",
+            (json.dumps(old), str(path)),
+        )
+    with patch.object(scanner, "read_metadata", wraps=scanner.read_metadata) as reader:
+        run_scan(tmp_path, config_file)
+    assert reader.call_count == 1
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        raw, version = con.execute(
+            "SELECT metadata_json,parser_version FROM tracks WHERE path=?", (str(path),)
+        ).fetchone()
+    assert version == database.PARSER_VERSION > 5
+    assert (json.loads(raw)["artwork"][0]["width"], json.loads(raw)["artwork"][0]["height"]) == (
+        320,
+        240,
+    )
+
+    def check_reports(expected):
+        issues = report(tmp_path)["issues"]
+        small = [i for i in issues if i["path"] == str(path) and i["rule"] == "small_artwork"]
+        assert [i["message"] for i in small] == expected
+        assert not any(
+            i["path"] == str(path) and i["rule"] == "artwork_dimensions_unavailable" for i in issues
+        )
+        with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+            assert list(csv.DictReader(stream)) == issues
+        html = (tmp_path / "reports/index.html").read_text()
+        assert html.count("small_artwork") == len(small)
+        assert signatures(library) == before
+
+    check_reports(["Cover width 320 < 500", "Cover height 240 < 500"])
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        for width, height, expected in [
+            (300, 300, ["Cover height 240 < 300"]),
+            (400, None, ["Cover width 320 < 400"]),
+            (320, 240, []),
+            (0, None, []),
+        ]:
+            config["artwork"].update(min_width=width, min_height=height)
+            config_file.write_text(yaml.safe_dump(config))
+            run_scan(tmp_path, config_file)
+            check_reports(expected)
 
 
 def test_flac_zero_picture_dimensions_refresh_old_cache(tmp_path, library, config_file):
