@@ -17,6 +17,10 @@ REPORT_FILES = (
 ISSUE_REPORT_FILES = REPORT_FILES[:3]
 
 
+class LockBusyError(ValueError):
+    """A supported scan or maintenance operation already owns an output lock."""
+
+
 def plain_path(path: Path):
     """Reject symlinks at every existing component, including dangling links."""
     path = path.absolute()
@@ -97,7 +101,7 @@ def exclusive_lock(path: Path):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise ValueError(f"A scan is already using {path}") from exc
+            raise LockBusyError(f"A scan is already using {path}") from exc
         yield
     finally:
         os.close(fd)

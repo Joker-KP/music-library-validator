@@ -302,4 +302,81 @@ Consumers pin `current` once for cross-file consistency. Prior generations are
 retained. Files and generation directories are synced before publication. SQLite
 and report publication are separate durability boundaries: publication failure
 leaves a committed cache and the prior complete reports, and the CLI returns 2.
-No web server or UI is required or implemented.
+No web server or UI is required for CLI scanning or standalone reports.
+
+## Optional report server
+
+`music-validator serve` starts a standard-library threaded HTTP server and a
+buildless HTML/CSS/JavaScript interface. Assets are packaged with the Python
+distribution. The CLI defaults remain unchanged; the optional Compose `ui`
+profile shares its existing read-only music/config mounts and writable outputs.
+No new runtime dependency or database migration is required.
+
+`server.py` exposes fixed assets, job operations and report endpoints, without
+arbitrary file serving or a Docker socket. POST requests require same-origin JSON
+and a custom header; there is no authentication. Loopback is the default bind;
+trusted-LAN exposure is explicit. Export routes accept only known report filenames
+and validated generation names, using existing output/symlink checks. HTML exports
+download as standalone attachments. Application rendering uses DOM text nodes and
+an external-script-only content security policy.
+
+`jobs.py` retains the current/last job and a bounded log in memory. It starts one
+`worker.py` subprocess with fixed config/cache/report arguments and validated
+mode/refresh flags, without a shell. The worker calls the existing `cli.run`.
+Separate stdout JSON-lines events carry structured progress and cache/publication
+milestones; stderr is drained into the log. `Progress` supports a throttled callback
+independently of terminal/log display. Existing scanner locks remain authoritative;
+read-only advisory probes expose occupied CLI locks but cannot provide external-job
+progress or prevent races during preflight.
+
+Cancellation targets the worker's process group, including decoders, with SIGTERM
+and a timed SIGKILL fallback. Server shutdown waits for worker cleanup. Job states
+distinguish completion with/without findings, failure and cancellation. Cache
+commit and report publication are tracked separately; failed publication must not
+be described as a cache rollback. No queue or durable job recovery is implemented.
+
+`report_store.py` reads the `current` pointer once per snapshot and loads files
+from that immutable generation. It never uses the scanner's writable database
+connection. A six-generation LRU bounds retained snapshots, though each parsed
+report still scales with its complete JSON size. Filtering, sorting and bounded
+pagination are server-side. Generation tokens pin subsequent page requests and
+exports even if CLI/UI scans publish newer results. Independent report families
+retain their own timestamps and schemas. The browser polls for job status and
+publication changes; it explicitly loads newer results to avoid mixing generations.
+
+The interface includes overview, directory-album catalog/diagnostics, integrity
+coverage and audio-match comparisons. It preserves album/disc identity, distinguishes
+issues from affected tracks and stream integrity from bitrate quality, and exposes
+cached/executed/incomplete/unselected outcomes. Configuration editing and persisted
+history are outside scope.
+
+### Fresh-start maintenance
+
+`POST /api/maintenance/fresh-start` requires the exact JSON object
+`{"confirmation": "FRESH START"}` and the existing same-origin/custom-header
+checks. The collapsed UI requires typing that phrase and explains archive and
+rescan consequences. `JobManager.fresh_start` holds the job-manager and report-store
+locks, refuses active/cancelling jobs, and clears the last job and parsed snapshots
+only after successful archiving. The last reset receipt is session-only and lets
+other tabs discard pinned results. Report queries/downloads hold the store lock
+so local readers cannot race maintenance renames.
+
+`maintenance.py` preflights all three report families using existing output safety
+checks and protects the primary configuration. It holds the existing database and
+three report-directory locks throughout archival, revalidating after acquisition.
+`LockBusyError` distinguishes ownership conflicts while remaining a CLI-compatible
+`ValueError`. Lock files and their inodes are never moved. SQLite is not opened or
+migrated: the selected database and any journal/WAL/SHM sidecars move together into
+a unique UTC `previous-data-*` directory beside the database. Report aliases,
+current pointers and generation directories for all modes move into a matching
+`previous-reports-*` directory below the report root, preserving relative links.
+Specialist directory shells retain their lock files. Unrelated files and previous
+archives are outside the move plan.
+
+Moves use same-volume renames and synced directory entries. Ordinary filesystem
+errors reverse completed moves; failed recovery retains archives and names their
+locations in the error. This is not a crash-atomic transaction across two volumes.
+Power-loss recovery requires inspecting active and archived state. A fresh start
+neither edits music/configuration nor launches a scan; the next existing CLI/worker
+scan creates an empty cache with a new library scope. No persistent schema changes,
+archive browser, automatic retention or restore operation are added.

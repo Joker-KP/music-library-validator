@@ -60,6 +60,16 @@
 
 ## P2 — optional UI
 
-- Lightweight authenticated or local-only web interface, advanced filtering, drill-down, trend charts.
+- Completed: confirmed fresh-start maintenance that archives the selected cache
+  and all report families into unique timestamped subfolders, preserves previous
+  archives and lock inodes, blocks overlapping scans and clears session results.
+
+- Completed: optional local/trusted-LAN report server with no authentication,
+  configured/integrity/identity scan controls, isolated worker cancellation,
+  structured phase progress, current/last job diagnostics, generation-pinned
+  pagination/exports, album filtering and integrity/audio-match views. CLI and
+  default one-shot Compose behavior remain available.
+- Persisted issue history/deltas and trend charts remain future work;
+  configuration editing and job history are outside the current UI scope.
 - Keep one-shot static HTML export as the default; never expose music writing functionality implicitly.
 - Optional external catalog integration (MusicBrainz/beets) only if clearly requested.

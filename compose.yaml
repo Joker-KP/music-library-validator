@@ -1,5 +1,5 @@
 services:
-  music-validator:
+  music-validator: &validator
     build: .
     image: music-library-validator:local
     environment:
@@ -13,3 +13,13 @@ services:
     restart: "no"
     user: "${PUID:-1000}:${PGID:-1000}"
     command: ["scan", "--config", "/config/rules.yaml", "--db", "/data/library.sqlite", "--reports", "/reports"]
+
+  report-server:
+    <<: *validator
+    profiles: ["ui"]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 15s
+    ports:
+      - "${UI_BIND_ADDRESS:-127.0.0.1}:${UI_PORT:-8765}:8765"
+    command: ["serve", "--host", "0.0.0.0", "--port", "8765", "--config", "/config/rules.yaml", "--db", "/data/library.sqlite", "--reports", "/reports"]

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Add collapsed **Library maintenance** with typed `FRESH START` confirmation.
+  Archive the active SQLite cache/sidecars and all report families into unique
+  timestamped subfolders, preserve music/configuration/previous archives and lock
+  files, reject active scans, roll back ordinary move failures, and clear session
+  jobs/results so the next CLI or UI scan can bind to another library.
+
+- Add optional `music-validator serve` and Compose `report-server` (`ui` profile)
+  with configured-audit, integrity and audio-identity scan controls, isolated
+  worker cancellation/retry, structured phase progress, bounded session job logs,
+  and explicit completion-with-findings versus execution failure. Retain CLI
+  operation, read-only music/config mounts, existing locks and cache behavior.
+- Add overview, album/issue, integrity coverage and audio-match browser views
+  with server-side search/sort/pagination, independent report timestamps and
+  generation-pinned full exports. No authentication, configuration editing,
+  persisted history, report schema changes or additional runtime dependencies.
+
+- Add `speech_marked_in_title` and `instrumental_marked_in_title` to the shipped
+  configuration. Missing or blank composer requires a title containing zapowiedź,
+  recytacja, wstęp, opowieść or wywiad; missing or blank lyricist requires instr,
+  wywiad or zapowiedź. Matching is case-insensitive; failures produce warnings.
+
 - Discover hierarchical `rules.yaml` patches inside the music library. Add/remove
   required tags and custom rules, replace custom definitions by ID, and inherit
   individual artwork/album settings. Track settings follow their actual folders;

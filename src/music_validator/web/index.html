@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Read-only music library reports and scan controls">
+  <title>Music Library Validator</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true">♫</span><span>Music Library<span class="brand-subtitle">VALIDATOR</span></span></a>
+    <p class="nav-label">REPORTS</p>
+    <nav aria-label="Report views">
+      <a href="#overview" data-view="overview">Overview</a>
+      <a href="#albums" data-view="albums">Albums &amp; issues</a>
+      <a href="#integrity" data-view="integrity">Audio integrity</a>
+      <a href="#identity" data-view="identity">Audio matches</a>
+    </nav>
+    <div class="sidebar-note"><span class="status-dot"></span> Read-only music access<p>Reports stay available while a new analysis runs.</p></div>
+  </aside>
+  <main>
+    <header class="page-header"><div><p class="eyebrow">YOUR COLLECTION, EXAMINED</p><h1 id="view-title">Overview</h1></div><button id="refresh" class="secondary">Refresh reports</button></header>
+    <div id="connection" role="status" class="notice" hidden></div>
+    <div id="error" role="alert" class="notice error" hidden></div>
+    <section class="panel scan-panel" aria-labelledby="scan-title">
+      <div class="section-heading"><div><p class="eyebrow">SCAN CONTROL</p><h2 id="scan-title">Run an analysis</h2></div><span id="job-status" class="badge">Ready</span></div>
+      <form id="scan-form">
+        <div class="scan-inputs"><label>Analysis<select id="mode"><option value="configured">Configured audit</option><option value="integrity">Integrity analysis</option><option value="identity">Audio-identity analysis</option></select></label><button id="start" type="submit">Start analysis <span aria-hidden="true">→</span></button></div>
+        <p id="mode-description" class="muted"></p>
+        <details class="refresh-options"><summary>Refresh options <span class="muted">· incremental by default</span></summary><div class="checks"><label><input type="checkbox" id="full-scan"> Refresh all inputs required by this analysis</label><label id="integrity-option"><input type="checkbox" id="recheck-integrity"> Repeat integrity checks; keep current tags and fingerprints</label><label id="identity-option"><input type="checkbox" id="recheck-identity"> Regenerate fingerprints; keep current tags</label></div><p class="muted">Refreshes can read and decode the collection again. Configured audits use the enabled checks in YAML.</p></details>
+      </form>
+      <div id="job" hidden>
+        <div class="job-line"><strong id="job-phase"></strong><div class="actions"><button id="job-results" class="secondary" hidden>View results</button><button id="retry" class="secondary" hidden>Run again</button><button id="cancel" class="danger" hidden>Cancel analysis</button></div></div>
+        <progress id="job-progress" aria-label="Current analysis phase"></progress>
+        <p id="job-counts" class="muted"></p><p id="job-message"></p><p id="job-times" class="muted"></p>
+        <details><summary>Job log <span class="muted">· last 100 lines</span></summary><pre id="job-log"></pre></details>
+      </div>
+      <p class="muted small">One analysis at a time. Scans started from the command line share the same library. The latest job stays visible until this server restarts.</p>
+    </section>
+    <details id="maintenance" class="panel maintenance">
+      <summary>Library maintenance <span class="muted">· fresh start</span></summary>
+      <h2>Archive cache and reports</h2>
+      <p id="reset-warning">Use this after switching music libraries. The active cache, fingerprints, integrity results and all generated reports will move into timestamped <code>previous-data-…</code> and <code>previous-reports-…</code> subfolders. Current results and the last job will disappear from this interface. The next analysis starts with an empty cache.</p>
+      <p class="muted">Music, configuration, unrelated files and existing archives stay in place. Archives remain on disk until you remove them manually. No scan starts automatically. Finish or cancel any active scan first.</p>
+      <form id="reset-form" aria-describedby="reset-warning">
+        <label>Type FRESH START to confirm<input id="reset-confirmation" type="text" autocomplete="off" spellcheck="false" required pattern="FRESH START" maxlength="11" placeholder="FRESH START"></label>
+        <button id="reset" class="danger" type="submit" disabled>Archive and start fresh</button>
+      </form>
+      <p id="reset-status" role="status"></p>
+    </details>
+    <div id="new-report" class="notice" hidden>A newer report is available. <button id="load-new" class="secondary">Load latest results</button></div>
+    <div id="results" aria-live="polite"></div>
+    <noscript><p>This interface requires JavaScript. Standalone HTML reports and the command-line scanner remain available.</p></noscript>
+    <footer>Music Library Validator <span>MP3 / FLAC · local analysis · originals remain read-only</span></footer>
+  </main>
+</body>
+</html>

@@ -18,6 +18,9 @@ music-validator = "music_validator.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+music_validator = ["web/*.html", "web/*.js", "web/*.css", "web/*.svg"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

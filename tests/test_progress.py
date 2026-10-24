@@ -75,3 +75,23 @@ def test_counting_phase_and_disabled_progress():
     with Progress(stream=quiet, enabled=False).phase("Counting audio files") as advance:
         advance(25)
     assert quiet.getvalue() == ""
+
+
+def test_structured_events_are_independent_of_stderr_and_preserve_failure():
+    stream = StringIO()
+    events = []
+    clock = [0.0]
+    progress = Progress(
+        stream=stream, enabled=False, callback=events.append, clock=lambda: clock[0]
+    )
+    with progress.phase("Analyzing tracks", 4) as advance:
+        clock[0] = 1
+        advance(2)
+    assert stream.getvalue() == ""
+    assert events[0]["completed"] == 0 and events[0]["status"] == "running"
+    assert events[1]["eta_seconds"] == 1
+    assert events[-1]["status"] == "completed"
+    assert events[-1]["completed"] == events[-1]["total"] == 2
+    with pytest.raises(KeyboardInterrupt), progress.phase("Publishing reports", 6):
+        raise KeyboardInterrupt
+    assert events[-1]["status"] == "failed"

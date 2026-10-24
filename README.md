@@ -13,6 +13,112 @@ music-validator scan --config config/rules.yaml --db data/library.sqlite --repor
 python -m pytest -q
 ```
 
+## Optional report server and scan controls
+
+Run the browser interface against the same config, cache and report directory as
+the CLI:
+
+```bash
+music-validator serve --config config/rules.yaml --db data/library.sqlite --reports reports
+# Open http://127.0.0.1:8765
+```
+
+The server has no authentication and binds to loopback by default. To make it
+available on your trusted LAN, pass `--host 0.0.0.0` and open
+`http://<NAS-or-Ubuntu-address>:8765`. Change the port with `--port`.
+No cloud services, JavaScript build, additional Python dependencies or Docker
+socket access are required.
+
+For Docker/Synology, use the optional Compose service; it inherits the scanner's
+music/config read-only mounts, cache, reports and UID/GID:
+
+```bash
+docker compose --profile ui up -d --build report-server
+# Available on the Docker host at http://127.0.0.1:8765
+# For LAN access instead:
+UI_BIND_ADDRESS=0.0.0.0 docker compose --profile ui up -d report-server
+# Stop the optional service:
+docker compose --profile ui stop report-server
+```
+
+`UI_PORT` changes the published host port. The original
+`docker compose run --rm music-validator` and all local CLI commands still work.
+Only one scan can own a given cache/report destination at a time. The interface
+detects occupied locks and reports an external scan; it cannot monitor or cancel
+a CLI job. Concurrent attempts still pass through the scanner's existing locks,
+including races during preflight/counting, so a worker may fail with a lock error.
+
+The scan form offers configured audit, integrity-only and audio-identity-only
+analysis. All start incrementally. Optional refresh controls correspond to
+`--full-scan`, `--recheck-integrity` and `--recheck-identity`; configured-audit
+rechecks require those features to be enabled in YAML. The same configuration,
+tool preflight, validation and read-only scan pipeline is used in both entry points.
+There is no queue: a second server job is rejected while one is active.
+
+The current/last job panel shows its operation, phase counts, phase elapsed time
+and ETA, job start/finish times, bounded log, errors, cancel and run-again actions.
+Closing a browser tab does not stop its job. A server shutdown cancels its worker
+and audio subprocess group, allowing cleanup before forced termination after
+eight seconds. Cancellation before cache commit rolls back; cancellation/failure
+after commit may leave the cache updated while the previous reports remain.
+Successful scans with findings are labelled completed with findings, rather than
+failed. Job state and the last 100 log lines are held in memory for this server
+session; there is no persisted job/issue history or restart recovery.
+
+Four report views provide an overview, searchable/sortable album catalog and
+track issues, per-tool integrity coverage, and matching-audio groups with compared
+tag values. Search/filtering and pagination run on the server (50 rows per page,
+20 audio groups); browser memory does not need the entire report. Full parsed
+JSON snapshots are held in a bounded server cache of up to six generations, so
+server memory still scales with report size. Normal reports expose album
+summaries and issues, not a complete tag inspector for every track.
+
+Reports are read from published immutable generations, without querying the live
+SQLite database or reading music during browsing. Each family shows its own
+generation time. Result pages and full HTML/CSV/JSON downloads pin one generation;
+new CLI or UI results produce a refresh notice instead of mixing old and new
+pages. Downloads remain complete exports regardless of browser filters. Missing
+reports show an empty state. Previously published reports remain available during
+a scan. Existing standalone HTML exports are unchanged and need no server.
+
+Configuration editing, acknowledgments, trends and historical comparisons are
+outside this interface. It never offers music modification or serves arbitrary
+music/config/cache paths. Metadata is rendered as text; state-changing HTTP calls
+require same-origin JSON and the `X-Music-Validator: 1` header. There is no sign-in.
+The unauthenticated service is intended for local or trusted-LAN access.
+
+### Fresh start after changing libraries
+
+Open **Library maintenance** below the scan controls, read the warning, type
+`FRESH START`, and select **Archive and start fresh**. This archives the active
+SQLite cache (metadata, fingerprints, integrity results, inventory and scope
+binding), its SQLite sidecars, and all generated configured/integrity/identity
+reports. It clears the session's last job and report snapshots without starting
+an analysis. Start a new analysis when ready; it creates a new cache bound to the
+currently configured library. Unlike `--full-scan`, this allows a different library
+scope. Existing CLI commands continue to work with the same database path.
+
+The archive locations are shown after completion. With the default Docker paths,
+they are `/data/previous-data-TIMESTAMP-ID/` and
+`/reports/previous-reports-TIMESTAMP-ID/`; timestamps are UTC and names are unique.
+For a custom `--db`, the data archive sits beside that database. Reports retain
+their relative `current`/generation links and specialist subdirectories inside
+the archive. Empty state does not create empty archive folders. Existing archives,
+unrelated files, configuration and music remain in place. The action archives only
+the selected cache and managed report outputs, not every file in `/data`.
+
+The action refuses active server jobs and takes the actual cache and all three
+report-family locks, including for CLI scans. Lock files stay in place to preserve
+coordination with other processes. This server finishes in-flight report reads
+before archiving; old generation URLs stop working after a fresh start. Other
+browser tabs clear their old results on polling. Archives remain on disk until
+you manage them manually; the UI does not provide history or restoration tools.
+
+Ordinary I/O failures reverse completed moves, with recovery paths reported if
+restoration also fails. Renames occur within each volume; the two archive roots
+are not one filesystem transaction. An abrupt machine shutdown can leave a partial
+archive: inspect the active outputs and timestamped archives before scanning again.
+
 ## Scan progress
 
 Every scan first walks the directory tree to count supported audio files, without
@@ -48,7 +154,7 @@ pass and normal stdout summary remain. The same flag works in Compose commands.
    each has CSV and JSON exports alongside it.
 5. Subsequent runs use SQLite cache. To rebuild metadata: `docker compose run --rm music-validator scan --config /config/rules.yaml --db /data/library.sqlite --reports /reports --full-scan`.
 
-In Docker use `/music` in `rules.yaml`. Music is mounted `:ro`; SQLite and reports are writable volumes. No web server or port is exposed. Can be scheduled with Synology Task Scheduler or cron. The container starts only for a scan.
+In Docker use `/music` in `rules.yaml`. Music is mounted `:ro`; SQLite and reports are writable volumes. The default service exposes no port and starts only for a scan. It can be scheduled with Synology Task Scheduler or cron. An optional report server is described below.
 
 The Dockerfile installs system packages and creates the runtime user before copying
 application files. Iterative source edits therefore reuse that layer and rebuild
@@ -72,7 +178,7 @@ report directory fail at lock acquisition with exit code 2.
 - Report *albums needing attention*, with track-level explanations in expandable HTML sections and machine-readable CSV/JSON.
 - SQLite caches parsed metadata by path, size and nanosecond mtime. New/changed files are re-read; removed files are purged after a successful traversal. **All cached entries are revalidated against current YAML rules every run**, so rule edits do not require a metadata rescan.
 - Album grouping is recalculated even on metadata cache hits. Cached read errors are retried on the next scan. Complete scans persist summary counters in SQLite.
-- Read-only scanner, one-shot Docker execution, no always-on service or opened port, no mandatory external services.
+- Read-only scanner and one-shot Docker execution by default; optional report server, no mandatory external services.
 - Default timezone Europe/Warsaw in Compose; editable.
 
 ## Examples
@@ -236,7 +342,7 @@ Audio-based tag consistency is also available as an opt-in check; see below.
 
 Implemented: recursive file enumeration, ID3 and FLAC Vorbis Comment normalization via Mutagen, MP3 APIC / FLAC Picture detection, album directory grouping with disc suffixes, disc-folder fallback, missing field / cover / filename regex and allowed-character checks, optional filename template and conditional custom rules, lyricist/original-lyricist/compilation normalization, album/title and albumartist consistency options, duplicate `(disc, track)` detection, optional cover-hash consistency, SQLite incremental cache, read errors, and issue/catalog reports in HTML, CSV and JSON.
 
-Not implemented yet: MP3 cover image dimension measurement; externally supplied audio checksum manifests; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; a persistent web UI; reproducible locked dependencies; structured logging and performance benchmarks.
+Not implemented yet: MP3 cover image dimension measurement; externally supplied audio checksum manifests; resilient path rename detection; semantic comparison of multi-valued tags; nonnumeric disc numbering; a richer declarative rule-expression language; persisted database issue history/deltas; reproducible locked dependencies; general structured logging and performance benchmarks.
 
 ## Audio integrity (optional)
 

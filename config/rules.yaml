@@ -68,6 +68,20 @@ custom_rules:
       operator: equals
       pattern: ''
     severity: info
+  - id: speech_marked_in_title
+    when: {field: composer, is_present: false}
+    field: title
+    template:
+      operator: regex
+      pattern: '(?is).*(?:zapowiedź|recytacja|wstęp|opowieść|wywiad).*'
+    severity: warning
+  - id: instrumental_marked_in_title
+    when: {field: lyricist, is_present: false}
+    field: title
+    template:
+      operator: regex
+      pattern: '(?is).*(?:instr|wywiad|zapowiedź).*'
+    severity: warning
 
 album_rules:
   consistent_album: true

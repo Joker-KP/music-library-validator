@@ -37,6 +37,7 @@ def run(
     recheck_identity=False,
     audio_integrity_only=False,
     audio_identity_only=False,
+    event_callback=None,
 ):
     config = load_config(config_path)
     mode = select_mode(
@@ -67,7 +68,7 @@ def run(
     )
     audio_options = config["audio_identity_rules"]
     backend = FingerprintBackend() if audio_options["enabled"] and audio_options["fields"] else None
-    progress = Progress(enabled=show_progress)
+    progress = Progress(enabled=show_progress, callback=event_callback)
     local_rules = LocalRules(root, config, primary_path=config_path.resolve())
     # Parse all patches before locks/mkdir/database writes, including empty folders.
     with progress.phase("Counting audio files") as advance:
@@ -222,6 +223,8 @@ def run(
             local_rules.verify()
             with progress.phase("Publishing reports", len(report_files)) as advance:
                 con.commit()
+                if event_callback:
+                    event_callback({"type": "cache_committed"})
                 if analysis is None:
                     summary = write_reports(reports, issues, count, catalog)
                 else:
@@ -241,6 +244,15 @@ def run(
                         else None,
                     )
                 advance(len(report_files))
+                if event_callback:
+                    event_callback(
+                        {
+                            "type": "reports_published",
+                            "mode": mode,
+                            "issues": len(issues),
+                            "generated_at": summary["generated_at"],
+                        }
+                    )
         finally:
             con.rollback()
             con.close()
@@ -268,6 +280,12 @@ def run(
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Read-only MP3/FLAC library auditor")
     sub = parser.add_subparsers(dest="command", required=True)
+    serve = sub.add_parser("serve", help="Serve reports and optional browser scan controls")
+    serve.add_argument("--config", type=Path, default=Path("config/rules.yaml"))
+    serve.add_argument("--db", type=Path, default=Path("data/library.sqlite"))
+    serve.add_argument("--reports", type=Path, default=Path("reports"))
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8765)
     scan = sub.add_parser("scan", help="Scan and generate reports")
     scan.add_argument("--config", type=Path, default=Path("config/rules.yaml"))
     scan.add_argument("--db", type=Path, default=Path("data/library.sqlite"))
@@ -303,6 +321,10 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     try:
+        if args.command == "serve":
+            from .server import serve as serve_reports
+
+            return serve_reports(args.config, args.db, args.reports, args.host, args.port)
         return run(
             args.config,
             args.db,

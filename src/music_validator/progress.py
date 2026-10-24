@@ -17,11 +17,12 @@ def _duration(seconds):
 
 
 class Progress:
-    def __init__(self, stream=None, enabled=True, clock=time.monotonic):
+    def __init__(self, stream=None, enabled=True, clock=time.monotonic, callback=None):
         self.stream = sys.stderr if stream is None else stream
         self.enabled = enabled
         self.clock = clock
         self.terminal = self.stream.isatty()
+        self.callback = callback
 
     @contextmanager
     def phase(self, label, total=None):
@@ -48,13 +49,32 @@ class Progress:
         self._render()
 
     def _render(self, force=False, finished=False, failed=False):
-        if not self.enabled:
+        if not self.enabled and self.callback is None:
             return
         now = self.clock()
-        if not force and now - self.updated < (0.2 if self.terminal else 10.0):
+        interval = 0.5 if self.callback else 0.2 if self.terminal else 10.0
+        if not force and now - self.updated < interval:
             return
         self.updated = now
         elapsed = max(0, now - self.started)
+        if self.callback is not None:
+            self.callback(
+                {
+                    "type": "progress",
+                    "phase": self.label,
+                    "completed": self.count,
+                    "total": self.total,
+                    "elapsed_seconds": round(elapsed, 2),
+                    "eta_seconds": (
+                        round(max(0, self.total - self.count) * elapsed / self.count, 2)
+                        if self.total is not None and self.count
+                        else None
+                    ),
+                    "status": "failed" if failed else "completed" if finished else "running",
+                }
+            )
+        if not self.enabled:
+            return
         label = self.label.ljust(LABEL_WIDTH)
         if self.total is None:
             line = f"{label}: {self.count} files | {_duration(elapsed)} elapsed"
