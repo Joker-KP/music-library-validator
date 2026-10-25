@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,7 +30,7 @@ class ScanResult:
     folder_sizes: dict[str, int] = field(default_factory=dict)
 
 
-def discover(root, extensions, on_directory=None, on_enter=None):
+def discover(root, extensions, on_directory=None, on_enter=None, *, exclude_directory_patterns=()):
     """Yield files while their parent descriptor remains open; never follow links.
 
     Errors are fatal to discovery, so callers must roll back instead of pruning.
@@ -38,7 +39,14 @@ def discover(root, extensions, on_directory=None, on_enter=None):
     after its descendants have been visited; symlinks never contribute bytes.
     on_enter receives the directory path and its verified descriptor before
     visiting any entries, including for directories without audio files.
+    Directory exclusion regexes search absolute paths before opening a matched
+    directory. Excluded subtrees contribute no files, callbacks or bytes.
     """
+    exclusions = tuple(re.compile(pattern) for pattern in exclude_directory_patterns)
+    absolute_root = root.absolute()
+
+    def excluded(relative):
+        return any(pattern.search(str(absolute_root / relative)) for pattern in exclusions)
 
     def walk(relative, dir_fd):
         total_size = 0
@@ -49,6 +57,8 @@ def discover(root, extensions, on_directory=None, on_enter=None):
         for name in names:
             info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
             if stat.S_ISDIR(info.st_mode):
+                if excluded(relative / name):
+                    continue
                 child_fd = os.open(
                     name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd
                 )
@@ -69,6 +79,8 @@ def discover(root, extensions, on_directory=None, on_enter=None):
             on_directory(root / relative, total_size)
         return total_size
 
+    if excluded(Path()):
+        return
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         yield from walk(Path(), fd)
@@ -80,10 +92,12 @@ def _signature(info):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
-def count_files(root, extensions, progress=None, *, on_enter=None):
+def count_files(root, extensions, progress=None, *, on_enter=None, exclude_directory_patterns=()):
     """Count without opening audio; on_enter can preflight local configurations."""
     count = 0
-    for _ in discover(root, extensions, on_enter=on_enter):
+    for _ in discover(
+        root, extensions, on_enter=on_enter, exclude_directory_patterns=exclude_directory_patterns
+    ):
         count += 1
         if progress is not None:
             progress(1)
@@ -104,6 +118,7 @@ def scan(
     recheck_identity=False,
     mode="configured",
     on_enter=None,
+    exclude_directory_patterns=(),
 ):
     scan_id = con.execute("INSERT INTO scans(mode) VALUES(?)", (mode,)).lastrowid
     database.start_audio_activity(con)
@@ -118,6 +133,7 @@ def scan(
         extensions,
         on_directory=directory_size if mode == "configured" else None,
         on_enter=on_enter,
+        exclude_directory_patterns=exclude_directory_patterns,
     ):
         result.seen += 1
         album = album_directory(path, root, pattern)

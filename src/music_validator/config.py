@@ -16,6 +16,7 @@ from .grouping import DEFAULT_DISC_PATTERN
 
 DEFAULTS = {
     "extensions": [".mp3", ".flac"],
+    "exclude_directory_patterns": [],
     "disc_folder_pattern": DEFAULT_DISC_PATTERN,
     "required_tags": ["title", "artist", "album", "tracknumber", "comment"],
     "artwork": {"required": True, "min_width": 500, "min_height": 500},
@@ -276,6 +277,11 @@ def validate_config(data) -> dict:
     ):
         raise ValueError("extensions must be a nonempty list containing only .mp3 and/or .flac")
     config["extensions"] = sorted({x.lower() for x in extensions})
+    excluded = config["exclude_directory_patterns"]
+    if not isinstance(excluded, list):
+        raise ValueError("exclude_directory_patterns must be a list")  # noqa: TRY004
+    for pattern in excluded:
+        _regex(pattern, "exclude_directory_patterns entry")
     _regex(config["disc_folder_pattern"], "disc_folder_pattern")
     if not isinstance(config["required_tags"], list):
         raise ValueError("required_tags must be a list")  # noqa: TRY004

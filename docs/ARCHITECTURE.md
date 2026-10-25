@@ -27,6 +27,16 @@ including directory-size aggregation. A callback advances once per completed fil
 including cache hits and explicit read/integrity/fingerprint errors. The count is an estimate:
 the CLI reports changes between traversals rather than trusting an obsolete list.
 
+Both traversals pass the global `exclude_directory_patterns` to `discover`.
+Compiled regexes search absolute directory paths before opening matching children
+or invoking directory callbacks; a matching library root yields no entries.
+Pruned subtrees contribute no audio, local configurations or recursive folder
+bytes. All modes use this path, so integrity/fingerprint tools cannot receive
+excluded files. Exclusions are not part of the persistent library identity:
+changing them uses existing completed-discovery pruning to remove stale file,
+metadata and audio cache rows transactionally. Removing a pattern rediscovers
+those paths; retained paths still use their caches.
+
 `progress.py` owns display and time estimation on stderr. Scanning and audio rules
 accept optional callbacks and do not print. Phase contexts distinguish counting,
 file analysis, tag validation, cross-album rules, audio indexing/matching and report

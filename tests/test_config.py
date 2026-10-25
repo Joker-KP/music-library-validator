@@ -17,6 +17,10 @@ from music_validator.config import load_config
         {"library_root": "/x", "filename": {"allowed_chars": "z-a"}},
         {"library_root": "/x", "filename": {"allowed_chars": "x" * 4097}},
         {"library_root": "/x", "extensions": [".wav"]},
+        *[
+            {"library_root": "/x", "exclude_directory_patterns": value}
+            for value in (None, "#recycle", {}, [None], [True], [1], [""], ["["], ["a" * 4097])
+        ],
         {"library_root": "/x", "album_rules": {"unique_disc_track": "yes"}},
         {"library_root": "/x", "artwork": {"min_width": -1}},
         {"library_root": "/x", "unknown": True},
@@ -70,6 +74,7 @@ def test_defaults_and_explicit_disabling(tmp_path):
     path = tmp_path / "rules.yaml"
     path.write_text("library_root: /x\n")
     config = load_config(path)
+    assert config["exclude_directory_patterns"] == []
     assert config["required_tags"] == ["title", "artist", "album", "tracknumber", "comment"]
     assert config["artwork"]["required"] is True
     assert config["filename"]["allowed_chars"] == "[]0-9a-zA-Z -()"
@@ -82,6 +87,15 @@ def test_defaults_and_explicit_disabling(tmp_path):
     path.write_text("library_root: /x\nrequired_tags: []\nartwork: {required: false}\n")
     assert load_config(path)["required_tags"] == []
     assert load_config(path)["artwork"]["required"] is False
+
+
+@pytest.mark.parametrize("patterns", [[], ["#recycle"], [r"(^|/)#recycle(/|$)", r"(?i)/kosz$"]])
+def test_directory_exclusion_patterns(tmp_path, patterns):
+    path = tmp_path / "rules.yaml"
+    path.write_text(
+        yaml.safe_dump({"library_root": "/music", "exclude_directory_patterns": patterns})
+    )
+    assert load_config(path)["exclude_directory_patterns"] == patterns
 
 
 @pytest.mark.parametrize("value", ["", None, "[]0-9a-zA-Z -()", "a-f []-", "a-ząćęłńóśźż"])

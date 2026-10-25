@@ -61,6 +61,29 @@ Allow all filename characters with `filename: {allowed_chars: ''}`. Omission of
 the key enables the default allowlist. YAML-only changes to this setting and the
 disc-folder pattern take effect on the next scan without rereading audio.
 
+## Directory exclusions
+
+`exclude_directory_patterns` is a global list of nonempty regex strings (maximum
+4096 characters each). The default is `[]`. Nulls, nonlists, nonstring entries,
+empty strings and invalid regexes fail configuration preflight before output writes.
+The shipped YAML enables `['#recycle']`.
+
+Each regex uses search semantics against a directory's full absolute path, with
+case-sensitive matching unless flags such as `(?i)` are supplied. Multiple
+patterns are ORed. For example, `'#recycle'` also matches `#recycle-copy`, while
+`'(^|/)#recycle(/|$)'` matches the exact directory component. Docker paths are
+container paths rooted at `/music`. Matching the library root excludes the entire
+library; patterns matching only an audio filename do not exclude that file.
+
+Excluded directories are pruned before opening them, so neither audio nor local
+rule files below them are read. Counting and processing discovery, catalog byte
+totals, and configured/integrity/identity modes all share this filter. Successful
+discovery prunes previously cached excluded files using the existing transaction;
+kept files retain cached metadata and audio results. Removing exclusions allows
+normal incremental discovery to restore the missing entries. No schema change,
+scope rebinding, full scan or source-file modification is required. The option
+cannot be overridden by a local `rules.yaml`.
+
 ## Folder-specific rule patches
 
 The fixed local filename is `rules.yaml` (case-sensitive). Local files are UTF-8
@@ -146,7 +169,7 @@ directory identified by the error. The global `disc_folder_pattern` determines
 which directories collapse. This scope also applies to `disc_number_mismatch`.
 
 Main-only keys such as `library_root`, `extensions`, `disc_folder_pattern`,
-`required_tags`, `custom_rules`, `cross_album_rules`,
+`exclude_directory_patterns`, `required_tags`, `custom_rules`, `cross_album_rules`,
 `audio_integrity` and `audio_identity_rules` are rejected locally. Cross-album
 and audio checks remain global. Dedicated audio modes still preflight local YAML
 in full, but do not execute its metadata checks.

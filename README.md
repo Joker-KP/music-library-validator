@@ -261,6 +261,33 @@ Examples of grouping:
 /music/Artist/Album/Bonus/01 - Demo.mp3      -> /music/Artist/Album/Bonus (separate)
 ```
 
+## Excluding directories
+
+Set `exclude_directory_patterns` in the main configuration to skip directories
+and all their descendants:
+
+```yaml
+exclude_directory_patterns:
+  - '#recycle'
+  # For an exact directory name instead: '(^|/)#recycle(/|$)'
+```
+
+Each entry is a regex searched anywhere in the full absolute directory path.
+Any matching entry excludes that subtree. Matching is case-sensitive; use `(?i)`
+for case-insensitive patterns. In Docker, paths are those inside the container
+(for example `/music/Artist/#recycle`), not the NAS host's mount path. If the
+library root itself matches, the scan is empty. Filename matches alone do not
+exclude files. The shipped configuration skips paths containing `#recycle`;
+omitting the option or setting `[]` excludes nothing.
+
+All scan modes and both discovery passes use the same filter. Skipped trees are
+not opened, their local `rules.yaml` files are not read, and their bytes do not
+contribute to catalog folder sizes. On a completed scan, previously cached files
+in excluded trees are removed from metadata, fingerprint and integrity caches.
+Kept tracks reuse their caches. Removing an exclusion discovers those files again
+without a full scan. Reports update for the selected analysis mode as usual.
+This setting is global and is not accepted in folder-specific patches.
+
 ## Folder-specific rules
 
 Place a UTF-8 `rules.yaml` inside the library to patch checks for that directory

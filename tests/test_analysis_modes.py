@@ -74,6 +74,62 @@ def assert_issue_formats(dest, report):
     assert not (dest / "catalog.html").exists()
 
 
+@pytest.mark.parametrize("mode", ["configured", "integrity", "identity"])
+def test_directory_exclusions_skip_audio_and_local_yaml_in_every_mode(
+    modes, library, tmp_path, mode, capsys
+):
+    config, audio, integrity, run = modes
+    excluded = library / "Artist" / "#recycle" / "Album"
+    excluded.mkdir(parents=True)
+    for ext in ("mp3", "flac"):
+        shutil.copyfile(next(library.rglob(f"*.{ext}")), excluded / f"01 - Hidden.{ext}")
+    (excluded / "rules.yaml").write_text("invalid: [", encoding="utf-8")
+    before = signatures(library)
+    config["exclude_directory_patterns"] = [r"(^|/)#recycle(/|$)"]
+    found = run(mode)
+    assert found["tracks"] == 2
+    assert "File count changed:" not in capsys.readouterr().err
+    assert not any("#recycle" in i["path"] for i in found["issues"])
+    assert audio.calls == (2 if mode == "identity" else 0)
+    assert len(integrity.calls) == (3 if mode == "integrity" else 0)
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        assert con.execute("SELECT count(*) FROM files").fetchone()[0] == 2
+        assert not any("#recycle" in path for (path,) in con.execute("SELECT path FROM files"))
+    assert signatures(library) == before
+
+
+def test_changed_exclusions_prune_all_caches_and_restore_files(modes, library, tmp_path):
+    config, audio, integrity, run = modes
+    config["audio_identity_rules"]["enabled"] = True
+    config["audio_integrity"]["enabled"] = True
+    excluded = next(library.rglob("*.mp3")).parent.parent / "#recycle"
+    excluded.mkdir()
+    for ext in ("mp3", "flac"):
+        shutil.copyfile(next(library.rglob(f"*.{ext}")), excluded / f"01 - Hidden.{ext}")
+    before = signatures(library)
+    assert run()["tracks"] == 4
+    calls = audio.calls, len(integrity.calls)
+    config["exclude_directory_patterns"] = ["#recycle"]
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("metadata reread")):
+        found = run()
+    assert found["tracks"] == 2
+    assert (audio.calls, len(integrity.calls)) == calls
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        for table in ("files", "tracks", "audio_fingerprints", "audio_integrity"):
+            paths = {path for (path,) in con.execute(f"SELECT path FROM {table}")}
+            assert len(paths) == 2
+            assert not any("#recycle" in path for path in paths)
+    with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+        assert list(csv.DictReader(stream)) == found["issues"]
+    assert "#recycle" not in (tmp_path / "reports/index.html").read_text()
+    config["exclude_directory_patterns"] = []
+    with patch.object(scanner, "read_metadata", wraps=scanner.read_metadata) as reader:
+        assert run()["tracks"] == 4
+    assert reader.call_count == 2
+    assert (audio.calls, len(integrity.calls)) == (calls[0] + 2, calls[1] + 3)
+    assert signatures(library) == before
+
+
 @pytest.mark.parametrize("mode", ["integrity", "identity"])
 def test_local_patches_are_validated_but_track_rules_are_skipped(modes, library, tmp_path, mode):
     _, _, _, run = modes

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add global `exclude_directory_patterns`: regex searches against full absolute
+  directory paths prune matching subtrees from counting, metadata/audio analysis,
+  local-rule discovery and catalog sizes. Completed scans prune excluded tracks
+  from all caches without changing music. Omission defaults to no exclusions;
+  the shipped configuration now skips paths containing `#recycle`.
+
 - Allow folder-specific `rules.yaml` patches to override `filename.regex`,
   including null to disable the pattern check. Overrides inherit down the
   directory tree, support disc folders and revalidate cached tracks without

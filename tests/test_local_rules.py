@@ -80,6 +80,7 @@ def test_patch_merging_order_replacement_and_parent_isolation():
         {"filename": {"allowed_chars": ""}},
         {"filename": {"match_template": None}},
         {"library_root": "/elsewhere"},
+        {"exclude_directory_patterns": ["#recycle"]},
         {"required_tags": []},
         {"audio_integrity": {"enabled": True}},
         {"added_required_tags": None},

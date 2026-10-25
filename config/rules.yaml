@@ -2,6 +2,10 @@
 # Folder-specific patches: place rules.yaml inside /music; see local-rules.example.yaml.
 library_root: /music
 extensions: [.mp3, .flac]
+# Regex search against absolute directory paths (inside Docker: /music/...).
+# Matching directories and their entire subtrees are skipped; [] disables exclusions.
+exclude_directory_patterns:
+  - '(^|/)#recycle(/|$)'
 # Albums are grouped by directory; recognized disc folders map to their parent.
 # Examples: CD1, CD 02, Disc 1, Disk-2, Album - CD2 (case-insensitive).
 # For names with totals, capture the disc: '^CD (?P<disc>\d+) of \d+$'.
@@ -93,7 +97,7 @@ album_rules:
 # Compare copies of the same title/artist in different album directories.
 # Missing credits differ from filled credits; surrounding whitespace is ignored.
 cross_album_rules:
-  enabled: true
+  enabled: false
   severity: warning
   # Normalized tag names to compare within each matched track group.
   fields: [composer, lyricist, origlyricist]

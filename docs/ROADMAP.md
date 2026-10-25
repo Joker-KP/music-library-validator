@@ -2,6 +2,10 @@
 
 ## P0 — harden functional baseline
 
+- Completed: configurable full-path directory exclusions shared by counting,
+  metadata/audio discovery and catalog sizes, with local-rule skipping and
+  transactional pruning/restoration of excluded cache entries.
+
 - Completed: count-only discovery followed by one metadata/fingerprint processing
   traversal, per-phase stderr progress with counts/ETA, throttled terminal/log
   output, quiet mode and regression coverage for cache hits, errors and drift.

@@ -62,6 +62,7 @@ def run(
         raise ValueError("Outputs must not overwrite the configuration")
     pattern = config["disc_folder_pattern"]
     extensions = set(config["extensions"])
+    exclusions = config["exclude_directory_patterns"]
     integrity_options = config["audio_integrity"]
     integrity_backend = (
         IntegrityBackend(integrity_options, extensions) if integrity_options["enabled"] else None
@@ -73,7 +74,11 @@ def run(
     # Parse all patches before locks/mkdir/database writes, including empty folders.
     with progress.phase("Counting audio files") as advance:
         estimated = scanner.count_files(
-            root, extensions, progress=advance, on_enter=local_rules.collect
+            root,
+            extensions,
+            progress=advance,
+            on_enter=local_rules.collect,
+            exclude_directory_patterns=exclusions,
         )
     with exclusive_lock(Path(str(db) + ".lock")), exclusive_lock(reports / ".scan.lock"):
         check_outputs(root, db, report_base)
@@ -95,6 +100,7 @@ def run(
                     recheck_identity=recheck_identity,
                     mode=mode,
                     on_enter=local_rules.check_directory,
+                    exclude_directory_patterns=exclusions,
                 )
             if show_progress and result.seen != estimated:
                 print(
