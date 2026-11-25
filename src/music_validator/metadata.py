@@ -93,6 +93,12 @@ def read_metadata(path: Path, fileobj=None) -> dict:
             f = audio.get(fid)
             if f is not None:
                 tags[dest] = _first(getattr(f, "text", []))
+        # Picard's standard description takes precedence over the literal tag name.
+        album_types = {frame.desc.casefold(): frame.text for frame in audio.getall("TXXX")}
+        for description in ("musicbrainz album type", "musicbrainz_albumtype"):
+            if description in album_types:
+                tags["musicbrainz_albumtype"] = _first(album_types[description])
+                break
         comments = audio.getall("COMM")
         if comments:
             tags["comment"] = _first(comments[0].text)
@@ -118,6 +124,7 @@ def read_metadata(path: Path, fileobj=None) -> dict:
         "description": "comment",
         "originallyricist": "origlyricist",
         "original_lyricist": "origlyricist",
+        "releasetype": "musicbrainz_albumtype",
     }
     for old, new in aliases.items():
         if old in tags and new not in tags:

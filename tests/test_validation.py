@@ -237,3 +237,62 @@ def test_consecutive_track_numbers_keeps_duplicate_and_read_errors_separate():
     assert "missing track numbers 02 (" in next(
         i["message"] for i in issues if i["rule"] == "track_number_gap"
     )
+
+
+SHORT_ALBUM_CONFIG = {
+    "album_rules": {"short_album_requires_ep": True},
+}
+
+
+@pytest.mark.parametrize("count", [1, 6, 7, 8])
+def test_short_album_requires_ep_only_below_seven_tracks(count):
+    rows = [numbered_track(str(n)) for n in range(1, count + 1)]
+    issues = validate(rows, SHORT_ALBUM_CONFIG)
+    assert len(issues) == (count if count < 7 else 0)
+    assert all(i["rule"] == "short_album_requires_ep" for i in issues)
+    assert all(i["severity"] == "warning" for i in issues)
+    assert all(f"Album has {count} tracks (< 7)" in i["message"] for i in issues)
+
+
+@pytest.mark.parametrize("value", [None, "", " ", "album", "EP", "ep; live"])
+def test_short_album_requires_exact_ep_on_every_readable_track(value):
+    rows = [numbered_track("01"), numbered_track("02")]
+    rows[0]["metadata"]["tags"]["musicbrainz_albumtype"] = "ep"
+    if value is not None:
+        rows[1]["metadata"]["tags"]["musicbrainz_albumtype"] = value
+    issues = validate(rows, SHORT_ALBUM_CONFIG)
+    assert len(issues) == 1
+    assert issues[0]["path"] == rows[1]["path"]
+    assert "MUSICBRAINZ_ALBUMTYPE='ep'" in issues[0]["message"]
+
+
+def test_short_album_ep_passes_and_rule_is_opt_in():
+    row = numbered_track("01")
+    assert validate([row], {}) == []
+    assert validate([row], {"album_rules": {"short_album_requires_ep": False}}) == []
+    row["metadata"]["tags"]["musicbrainz_albumtype"] = "ep"
+    assert validate([row], SHORT_ALBUM_CONFIG) == []
+    assert validate([], SHORT_ALBUM_CONFIG) == []
+
+
+def test_short_album_counts_all_discs_together_and_keeps_albums_separate():
+    rows = [numbered_track(str(n), folder_disc=1) for n in range(1, 4)]
+    rows += [numbered_track(str(n), folder_disc=2) for n in range(1, 5)]
+    rows.append(numbered_track("01", album="B"))
+    issues = validate(rows, SHORT_ALBUM_CONFIG)
+    assert len(issues) == 1
+    assert issues[0]["album"] == "/music/B"
+    rows = [r for r in rows if r["album_dir"] == "/music/A"][:-1]
+    assert len(validate(rows, SHORT_ALBUM_CONFIG)) == 6
+
+
+def test_short_album_counts_unreadable_files_but_retains_read_errors():
+    rows = [numbered_track(str(n)) for n in range(1, 8)]
+    rows[-1]["error"] = "Cannot read metadata"
+    rows[-1]["metadata"] = None
+    assert [i["rule"] for i in validate(rows, SHORT_ALBUM_CONFIG)] == ["read_error"]
+    issues = validate(rows[-2:], SHORT_ALBUM_CONFIG)
+    assert {i["rule"] for i in issues} == {"read_error", "short_album_requires_ep"}
+    assert "Album has 2 tracks (< 7)" in next(
+        i["message"] for i in issues if i["rule"] == "short_album_requires_ep"
+    )

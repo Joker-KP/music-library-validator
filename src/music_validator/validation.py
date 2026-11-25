@@ -169,6 +169,18 @@ def validate_albums(rows, config):
     ar = config.get("album_rules", {})
     for tracks in albums.values():
         good = [r for r in tracks if not r.get("error")]
+        if ar.get("short_album_requires_ep") and len(tracks) < 7:
+            for row in good:
+                actual = row["metadata"].get("tags", {}).get("musicbrainz_albumtype", "")
+                if actual != "ep":
+                    issues.append(
+                        issue(
+                            row,
+                            "short_album_requires_ep",
+                            f"Album has {len(tracks)} tracks (< 7): "
+                            f"expected MUSICBRAINZ_ALBUMTYPE='ep', found {actual!r}",
+                        )
+                    )
         if ar.get("consecutive_track_numbers"):
             issues.extend(_track_sequence_issues(good))
         if ar.get("disc_number_mismatch", True):

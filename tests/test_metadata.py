@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from mutagen.flac import Picture
-from mutagen.id3 import APIC, ID3, TCMP, TCOM, TDRC, TEXT, TOLY, TYER
+from mutagen.id3 import APIC, ID3, TCMP, TCOM, TDRC, TEXT, TOLY, TXXX, TYER
 from PIL import Image
 
 from music_validator import metadata
@@ -211,6 +211,58 @@ def test_mp3_composer_normalization(version):
     result = metadata.read_metadata(Path("01 - Song.mp3"), fileobj=source)
     assert result["tags"]["composer"] == "Łukasz Żółć"
     assert source.getvalue() == original
+
+
+@pytest.mark.parametrize("version", [3, 4])
+@pytest.mark.parametrize(
+    "description", ["MusicBrainz Album Type", "MUSICBRAINZ_ALBUMTYPE", "musicbrainz_albumtype"]
+)
+def test_mp3_musicbrainz_albumtype_normalization(version, description):
+    tags = ID3()
+    tags.add(TXXX(encoding=3, desc=description, text=["ep"]))
+    source = BytesIO()
+    tags.save(source, v2_version=version)
+    original = source.getvalue()
+    source.seek(0)
+    result = metadata.read_metadata(Path("01 - Song.mp3"), fileobj=source)
+    assert result["tags"]["musicbrainz_albumtype"] == "ep"
+    assert source.getvalue() == original
+
+
+def test_mp3_musicbrainz_albumtype_prefers_standard_frame_and_first_value():
+    tags = ID3()
+    tags.add(TXXX(encoding=3, desc="MUSICBRAINZ_ALBUMTYPE", text=["album"]))
+    tags.add(TXXX(encoding=3, desc="MusicBrainz Album Type", text=["ep", "live"]))
+    source = BytesIO()
+    tags.save(source)
+    source.seek(0)
+    result = metadata.read_metadata(Path("01 - Song.mp3"), fileobj=source)
+    assert result["tags"]["musicbrainz_albumtype"] == "ep"
+
+
+def test_mp3_unrelated_txxx_does_not_supply_albumtype():
+    tags = ID3()
+    tags.add(TXXX(encoding=3, desc="Unrelated", text=["ep"]))
+    source = BytesIO()
+    tags.save(source)
+    source.seek(0)
+    result = metadata.read_metadata(Path("01 - Song.mp3"), fileobj=source)
+    assert "musicbrainz_albumtype" not in result["tags"]
+
+
+@pytest.mark.parametrize("key", ["MUSICBRAINZ_ALBUMTYPE", "RELEASETYPE"])
+def test_flac_musicbrainz_albumtype_normalization(monkeypatch, key):
+    tags = {key: ["ep", "live"]}
+    monkeypatch.setattr(metadata, "FLAC", lambda source: SimpleNamespace(tags=tags, pictures=[]))
+    result = metadata.read_metadata(Path("01 - Song.flac"))
+    assert result["tags"]["musicbrainz_albumtype"] == "ep"
+
+
+def test_flac_musicbrainz_albumtype_preserves_explicit_canonical_tag(monkeypatch):
+    tags = {"MUSICBRAINZ_ALBUMTYPE": ["album"], "RELEASETYPE": ["ep"]}
+    monkeypatch.setattr(metadata, "FLAC", lambda source: SimpleNamespace(tags=tags, pictures=[]))
+    result = metadata.read_metadata(Path("01 - Song.flac"))
+    assert result["tags"]["musicbrainz_albumtype"] == "album"
 
 
 def test_mp3_lyricist_original_lyricist_and_compilation_normalization():

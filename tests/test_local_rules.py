@@ -75,6 +75,15 @@ def test_consecutive_track_numbers_can_be_enabled_and_disabled_locally():
     assert disabled["album_rules"]["consecutive_track_numbers"] is False
 
 
+def test_short_album_ep_rule_can_be_enabled_and_disabled_locally():
+    parent = base_config()
+    enabled = apply_patch(parent, {"album_rules": {"short_album_requires_ep": True}})
+    assert enabled["album_rules"]["short_album_requires_ep"] is True
+    assert parent["album_rules"]["short_album_requires_ep"] is False
+    disabled = apply_patch(enabled, {"album_rules": {"short_album_requires_ep": False}})
+    assert disabled["album_rules"]["short_album_requires_ep"] is False
+
+
 @pytest.mark.parametrize(
     "value",
     [

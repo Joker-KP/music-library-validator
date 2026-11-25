@@ -35,14 +35,15 @@ guessing a disc number. Grouping changes apply to cached tracks without audio re
 - `album_rules.consistent_albumartist`: optional same check for albumartist.
 - `album_rules.unique_disc_track`: repeats of the same `(discnumber, tracknumber)` are flagged. Track numbers can be `1` or `1/10`.
 - `album_rules.consecutive_track_numbers`: optional continuity check from 1 through each disc's highest observed track number. Default `false`; enabled in the shipped YAML. Gaps emit `track_number_gap` errors, and unusable track numbers emit `invalid_tracknumber` errors. See details below.
+- `album_rules.short_album_requires_ep`: for albums with fewer than seven detected audio files, require `musicbrainz_albumtype` exactly equal to `ep` on every readable track. Missing/wrong values emit per-track warnings. Default `false`; enabled in the shipped YAML. See details below.
 - `album_rules.consistent_artwork`: optional check for multiple distinct embedded image hashes across album. This baseline does not require images to be identical in all contexts.
 - `album_rules.disc_number_mismatch`: enabled by default; report disagreement between a parsed disc tag and the nearest disc folder. The tag still controls duplicate detection. Set false to disable this diagnostic.
 
 Required-tag and artwork presence checks are enabled by default even if omitted
 from YAML. Disable explicitly with `required_tags: []` and
 `artwork: {required: false}`. Default album checks are consistent album,
-unique disc/track and disc mismatch; albumartist/artwork consistency and consecutive
-track numbering are opt-in when omitted from YAML.
+unique disc/track and disc mismatch; albumartist/artwork consistency, consecutive
+track numbering and the short-album EP check are opt-in when omitted from YAML.
 `filename.regex` defaults to `'^\d{2} - .+$'`; set null to disable. Custom rules
 default to an empty list; each requires a unique identifier, field and
 `template`, with severity `info`, `warning` (default)
@@ -103,6 +104,46 @@ collapsed disc folder. All discs are checked together using that album's
 settings. YAML changes revalidate cached metadata without audio reads, parser
 version changes or database migration. HTML/CSV/JSON share the resulting error
 issues, which also contribute to the album catalog's issue counts.
+
+## EP tag for short albums
+
+```yaml
+album_rules:
+  short_album_requires_ep: true
+```
+
+An album with 1–6 detected MP3/FLAC files must have `musicbrainz_albumtype` exactly
+equal to `ep` on every readable track. This is a configurable collection convention,
+not a claim about the release's official classification. Seven or more files skip
+the rule. Count files across the entire canonical directory album, including
+collapsed disc folders, unreadable files and repeated track numbers. The count
+does not use track-number maxima, declared totals or durations. Unreadable files
+retain separate `read_error` issues and are excluded only from tag comparisons.
+
+Each missing, blank or unequal value produces a `short_album_requires_ep` warning
+at that file's path, with the total album count, expected value and actual value.
+Comparison is literal and case-sensitive; `EP`, surrounding spaces and `ep; live`
+do not pass. The existing first-value policy for multi-valued tags remains in force.
+
+The normalized field is `musicbrainz_albumtype`. FLAC reads
+`MUSICBRAINZ_ALBUMTYPE` directly, with `RELEASETYPE` as an alias only when the
+canonical tag is absent (even a blank canonical value takes precedence). MP3
+recognizes TXXX descriptions `MusicBrainz Album Type` and `MUSICBRAINZ_ALBUMTYPE`
+case-insensitively, preferring the former when both exist. The standard Picard
+MP3 description and Vorbis `RELEASETYPE` mapping are documented in
+[Picard's tag mapping](https://picard-docs.musicbrainz.org/en/latest/appendices/tag_mapping.html#release-type).
+
+The option requires a YAML boolean. Omission defaults to `false`; the shipped
+configuration enables it explicitly. Local `album_rules` can override it at
+the canonical album directory or an ancestor, never within a collapsed disc
+folder. Reports use the unchanged HTML/CSV/JSON issue schema and include these
+warnings in catalog issue counts. Dedicated audio-only modes skip this metadata
+rule as usual.
+
+Parser version 7 refreshes older cached metadata once for the new MP3 field and
+FLAC alias. No database schema migration, cache deletion or full scan is needed.
+Later YAML-only edits revalidate cached tags without rereading audio. No tags
+or original files are modified.
 
 ## Directory exclusions
 

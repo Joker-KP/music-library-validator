@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add `album_rules.short_album_requires_ep`: albums containing 1–6 detected
+  MP3/FLAC files across all discs require `MUSICBRAINZ_ALBUMTYPE=ep` on every
+  readable track. Missing or unequal values produce per-track warnings; files
+  with read errors count toward the threshold and keep their own diagnostics.
+  The shipped YAML enables the rule; omission defaults to `false`. Allow local
+  canonical-album overrides and preserve report schemas and read-only music.
+- Read MP3 `TXXX:MusicBrainz Album Type` (also the literal
+  `TXXX:MUSICBRAINZ_ALBUMTYPE`) as normalized `musicbrainz_albumtype`; alias FLAC
+  `RELEASETYPE` when `MUSICBRAINZ_ALBUMTYPE` is absent. Keep the first-value policy.
+  Parser version 7 automatically refreshes older metadata caches once without
+  changing schema 4, deleting data or requiring a full scan. Later rule edits
+  reuse cached metadata.
+
 - Add `album_rules.consecutive_track_numbers` to detect numbering gaps from 1
   through each disc's highest observed track number. Emit `track_number_gap`
   errors with compact missing ranges and `invalid_tracknumber` errors for unusable

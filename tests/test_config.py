@@ -26,6 +26,10 @@ from music_validator.config import load_config
             {"library_root": "/x", "album_rules": {"consecutive_track_numbers": value}}
             for value in (None, "true", 1, [], {})
         ],
+        *[
+            {"library_root": "/x", "album_rules": {"short_album_requires_ep": value}}
+            for value in (None, "true", 1, [], {})
+        ],
         {"library_root": "/x", "artwork": {"min_width": -1}},
         {"library_root": "/x", "unknown": True},
         {"library_root": "/x", "custom_rules": [{"id": "a", "field": "comment"}]},
@@ -83,6 +87,7 @@ def test_defaults_and_explicit_disabling(tmp_path):
     assert config["artwork"]["required"] is True
     assert config["filename"]["allowed_chars"] == "[]0-9a-zA-Z -()"
     assert config["album_rules"]["consecutive_track_numbers"] is False
+    assert config["album_rules"]["short_album_requires_ep"] is False
     assert config["cross_album_rules"] == {
         "enabled": True,
         "severity": "warning",

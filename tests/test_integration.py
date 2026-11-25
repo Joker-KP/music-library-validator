@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from html import escape
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ import pytest
 import yaml
 from conftest import signatures
 from mutagen.flac import FLAC, Picture
-from mutagen.id3 import APIC, ID3, TALB, TCOM, TDRC, TEXT, TIT2, TPE1, TRCK
+from mutagen.id3 import APIC, ID3, TALB, TCOM, TDRC, TEXT, TIT2, TPE1, TRCK, TXXX
 from PIL import Image
 
 from music_validator import cli, database, scanner
@@ -33,6 +34,97 @@ def records(tmp_path):
 
 def report(tmp_path):
     return json.loads((tmp_path / "reports/report.json").read_text())
+
+
+def test_short_album_ep_formats_parser_upgrade_cache_local_rules_and_reports(tmp_path):
+    library = tmp_path / "music"
+    specs = [
+        ("A", 1, "mp3", "MusicBrainz Album Type", "ep"),
+        ("A", 2, "flac", "RELEASETYPE", "ep"),
+        ("A", 3, "mp3", None, None),
+        ("A", 4, "flac", "MUSICBRAINZ_ALBUMTYPE", "<album & live>"),
+        ("C", 1, "mp3", "MUSICBRAINZ_ALBUMTYPE", "ep"),
+        ("C", 2, "flac", "MUSICBRAINZ_ALBUMTYPE", "ep"),
+    ] + [("B", n, "flac", None, None) for n in range(1, 8)]
+    upgrade_paths = []
+    for album, number, ext, key, value in specs:
+        source = BytesIO((Path(__file__).parent / "fixtures" / f"silence.{ext}").read_bytes())
+        if ext == "mp3":
+            tags = ID3(source)
+            if key:
+                tags.add(TXXX(encoding=3, desc=key, text=[value]))
+            tags.save(source)
+        else:
+            audio = FLAC(source)
+            if key:
+                audio[key] = [value]
+            source.seek(0)
+            audio.save(source)
+        # B spans two discs: neither disc alone reaches seven tracks.
+        directory = library / album / ("CD1" if number <= 3 else "CD2")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{number:02d} - Song.{ext}"
+        path.write_bytes(source.getvalue())
+        if album == "A" and number <= 2:
+            upgrade_paths.append(path)
+    original = signatures(library)
+    config_file = tmp_path / "ep.yaml"
+    config = {
+        "library_root": str(library),
+        "required_tags": [],
+        "artwork": {"required": False},
+        "album_rules": {"consistent_album": False, "unique_disc_track": False},
+        "cross_album_rules": {"enabled": False},
+    }
+
+    def scan_and_check(expected):
+        before = signatures(library)
+        config_file.write_text(yaml.safe_dump(config), encoding="utf-8")
+        run_scan(tmp_path, config_file)
+        found = report(tmp_path)["issues"]
+        assert len(found) == expected
+        assert all(i["rule"] == "short_album_requires_ep" for i in found)
+        assert all(i["severity"] == "warning" and i["album"] == str(library / "A") for i in found)
+        assert all("Album has 4 tracks (< 7)" in i["message"] for i in found)
+        with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+            assert list(csv.DictReader(stream)) == found
+        document = (tmp_path / "reports/index.html").read_text()
+        assert document.count("<td>short_album_requires_ep</td>") == expected
+        assert all(escape(i["message"]) in document for i in found)
+        assert "<album & live>" not in document
+        catalog = json.loads((tmp_path / "reports/catalog.json").read_text())["albums"]
+        assert len(catalog) == 3
+        assert sum(a["number_of_issues"] or 0 for a in catalog) == expected
+        assert signatures(library) == before
+
+    scan_and_check(0)
+    # Version 6 did not read this MP3 frame or normalize FLAC RELEASETYPE.
+    with sqlite3.connect(tmp_path / "cache.sqlite") as con:
+        for path in upgrade_paths:
+            raw = con.execute(
+                "SELECT metadata_json FROM tracks WHERE path=?", (str(path),)
+            ).fetchone()[0]
+            old = json.loads(raw)
+            old["tags"].pop("musicbrainz_albumtype", None)
+            con.execute(
+                "UPDATE tracks SET metadata_json=?,parser_version=6 WHERE path=?",
+                (json.dumps(old), str(path)),
+            )
+    assert database.PARSER_VERSION > 6
+    config["album_rules"]["short_album_requires_ep"] = True
+    with patch.object(scanner, "read_metadata", wraps=scanner.read_metadata) as reader:
+        scan_and_check(2)
+    assert reader.call_count == 2
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        scan_and_check(2)
+        local = library / "A/rules.yaml"
+        local.write_text("album_rules: {short_album_requires_ep: false}\n", encoding="utf-8")
+        scan_and_check(0)
+        local.unlink()
+        scan_and_check(2)
+        config["album_rules"]["short_album_requires_ep"] = False
+        scan_and_check(0)
+    assert signatures(library) == original
 
 
 def test_track_number_gaps_cached_revalidation_local_override_and_all_reports(tmp_path):

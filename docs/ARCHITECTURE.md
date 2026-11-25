@@ -241,6 +241,14 @@ cache and independent fingerprint/integrity results. Later minimum-size rule edi
 revalidate cached dimensions without rereading audio. All embedded images are
 checked, including multiple APIC frames; no image pixels or music files are changed.
 
+Parser version 7 adds normalized `musicbrainz_albumtype`: MP3 TXXX descriptions
+`MusicBrainz Album Type` and `MUSICBRAINZ_ALBUMTYPE` are recognized
+case-insensitively with the standard description taking precedence. FLAC retains
+its literal `MUSICBRAINZ_ALBUMTYPE` and aliases `RELEASETYPE` only when the
+canonical field is absent. Both use the existing first-value policy. Older
+metadata refreshes once through the existing parser-version invalidation,
+preserving schema 4 and independent fingerprint/integrity caches.
+
 ## Validation execution
 
 `local_rules.py` owns the seven-key patch grammar, inheritance and read-only
@@ -279,6 +287,13 @@ unusable track numbers emit per-file `invalid_tracknumber` errors. Metadata read
 failures remain separate. Suffix totals and whole missing discs are not checked.
 The rule consumes cached metadata and inherits album-scoped local settings;
 neither normalization, album grouping, schema nor parser version changes.
+
+The optional `short_album_requires_ep` rule uses the full album's observed file
+count, including unreadable files and all collapsed discs. At fewer than seven
+files it compares each readable track's normalized `musicbrainz_albumtype`
+literally with `ep`, emitting per-file warnings for missing/unequal values.
+Local settings come from the canonical album directory, and subsequent rule edits
+reuse cached metadata. Metadata read failures retain independent diagnostics.
 
 The independent `filename.allowed_chars` rule checks the stem against a literal
 allowlist with ASCII same-case letter/digit ranges. Punctuation is literal;

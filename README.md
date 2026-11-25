@@ -293,6 +293,34 @@ the canonical album directory (above CD1/CD2). Rule edits revalidate cached
 metadata on the next normal scan without `--full-scan`. For Docker, rebuild the
 image after updating the application: `docker compose build`.
 
+## EP tag for albums with fewer than seven tracks
+
+```yaml
+album_rules:
+  short_album_requires_ep: true
+```
+
+This convention requires every readable track in an album containing **1–6 audio
+files** to have `MUSICBRAINZ_ALBUMTYPE` exactly equal to `ep`. Missing/blank tags
+or other values (including `EP` and `ep; live`) produce per-track
+`short_album_requires_ep` warnings with the album's track count and actual value.
+Albums with seven or more files are not checked by this rule. Counts include all
+detected MP3/FLAC files across CD1/CD2, including unreadable files; those files
+retain separate `read_error` issues and cannot have their tags checked.
+
+FLAC supports `MUSICBRAINZ_ALBUMTYPE` directly and Picard's `RELEASETYPE` as an
+alias when the canonical tag is absent. MP3 supports `TXXX:MusicBrainz Album Type`
+and `TXXX:MUSICBRAINZ_ALBUMTYPE`, preferring the former if both exist. The usual
+first-value policy applies. All expose normalized `musicbrainz_albumtype` for
+rules and templates.
+
+The shipped YAML enables the rule; omission defaults to `false`. Disable it
+globally or through `album_rules` in an album's local `rules.yaml`, above CD1/CD2.
+Rebuild the Docker image after updating the application. Parser version 7 refreshes
+older metadata caches automatically once to read the newly supported MP3 tag and
+FLAC alias. No cache deletion or `--full-scan` is required; subsequent YAML-only
+changes reuse cached metadata. Original audio files are never modified.
+
 ## Excluding directories
 
 Set `exclude_directory_patterns` in the main configuration to skip directories
@@ -693,6 +721,9 @@ entries once; subsequent scans reuse it. Parser version 5 adds MP3 `TCOM` as
 composer rules also work with existing libraries. Parser version 6 measures MP3 APIC
 artwork dimensions, so minimum-size checks also apply to MP3s. Older metadata
 entries refresh automatically once on the next configured or identity scan.
+Parser version 7 exposes MP3 MusicBrainz album type and the FLAC `RELEASETYPE`
+alias as `musicbrainz_albumtype`, refreshing older metadata once while preserving
+the database schema and independent audio-analysis caches.
 Parser version 2 introduced corrected FLAC artwork dimensions. No database
 deletion or `--full-scan` is necessary; later unchanged
 scans use the cache normally. Install updated dependencies with
