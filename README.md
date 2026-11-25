@@ -261,6 +261,38 @@ Examples of grouping:
 /music/Artist/Album/Bonus/01 - Demo.mp3      -> /music/Artist/Album/Bonus (separate)
 ```
 
+## Consecutive track numbers within an album
+
+Enable this album rule to require track numbers starting at 1 without gaps:
+
+```yaml
+album_rules:
+  consecutive_track_numbers: true
+```
+
+The shipped configuration enables this check; configurations omitting the option
+retain the previous behavior (default `false`). Missing numbers produce
+`track_number_gap` issues at **error** severity: `01, 02, 04` is missing `03`,
+and `02, 03` is missing `01`. Reports list consecutive missing numbers as compact
+ranges. Missing, unparseable or nonpositive track numbers produce per-file
+`invalid_tracknumber` errors while other readable tracks are still checked.
+
+The rule uses normalized `tracknumber` tags for both MP3 and FLAC, not filenames.
+`1`, `01` and `1/12` supply the same track number. Each disc is checked separately,
+using the disc tag first, then the disc-folder number, then disc 1. An album's
+CD1/CD2 folders remain one album; both discs can start at `01`. Duplicate numbers
+are checked separately by `unique_disc_track`.
+
+Only the sequence from 1 through the highest observed number on each disc is
+checked. The `/12` total and FLAC total tags are not checked, so this rule cannot
+detect missing final tracks or an entirely absent disc. Unreadable files retain
+their `read_error` issues and cannot supply track numbers for this check.
+
+Set `false` to disable the rule globally or in a folder-specific `rules.yaml` at
+the canonical album directory (above CD1/CD2). Rule edits revalidate cached
+metadata on the next normal scan without `--full-scan`. For Docker, rebuild the
+image after updating the application: `docker compose build`.
+
 ## Excluding directories
 
 Set `exclude_directory_patterns` in the main configuration to skip directories

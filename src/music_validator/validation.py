@@ -25,6 +25,50 @@ def _tracknum(value):
         return None
 
 
+def _track_sequence_issues(tracks):
+    """Check readable normalized tracks per disc without expanding missing ranges."""
+    issues = []
+    numbers = defaultdict(set)
+    representatives = {}
+    for row in tracks:
+        tags = row["metadata"].get("tags", {})
+        raw = tags.get("tracknumber")
+        number = _tracknum(raw)
+        if number is None or number < 1:
+            issues.append(
+                issue(
+                    row,
+                    "invalid_tracknumber",
+                    f"Cannot check track sequence: expected a positive track number, found {raw!r}",
+                    "error",
+                )
+            )
+            continue
+        disc = _tracknum(tags.get("discnumber")) or row.get("disc_from_path") or 1
+        numbers[disc].add(number)
+        if disc not in representatives or row["path"] < representatives[disc]["path"]:
+            representatives[disc] = row
+    for disc, present in sorted(numbers.items()):
+        missing = []
+        previous = 0
+        for number in sorted(present):
+            start, end = previous + 1, number - 1
+            if start <= end:
+                missing.append(f"{start:02d}" if start == end else f"{start:02d}-{end:02d}")
+            previous = number
+        if missing:
+            issues.append(
+                issue(
+                    representatives[disc],
+                    "track_number_gap",
+                    f"Disc {disc}: missing track numbers {', '.join(missing)} "
+                    f"(expected consecutive numbering from 01 through {previous:02d})",
+                    "error",
+                )
+            )
+    return issues
+
+
 def validate(rows, config, *, track_config=None):
     """Validate complete albums while allowing directory-specific track settings."""
     rows = list(rows)
@@ -125,6 +169,8 @@ def validate_albums(rows, config):
     ar = config.get("album_rules", {})
     for tracks in albums.values():
         good = [r for r in tracks if not r.get("error")]
+        if ar.get("consecutive_track_numbers"):
+            issues.extend(_track_sequence_issues(good))
         if ar.get("disc_number_mismatch", True):
             for row in good:
                 tagged = _tracknum(row["metadata"].get("tags", {}).get("discnumber"))

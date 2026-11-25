@@ -14,7 +14,7 @@ import pytest
 import yaml
 from conftest import signatures
 from mutagen.flac import FLAC, Picture
-from mutagen.id3 import APIC, ID3, TALB, TCOM, TDRC, TEXT, TIT2, TPE1
+from mutagen.id3 import APIC, ID3, TALB, TCOM, TDRC, TEXT, TIT2, TPE1, TRCK
 from PIL import Image
 
 from music_validator import cli, database, scanner
@@ -33,6 +33,71 @@ def records(tmp_path):
 
 def report(tmp_path):
     return json.loads((tmp_path / "reports/report.json").read_text())
+
+
+def test_track_number_gaps_cached_revalidation_local_override_and_all_reports(tmp_path):
+    library = tmp_path / "music"
+    for album, disc, numbers, ext in [
+        ("A", None, [1, 3], "mp3"),
+        ("B", 1, [1, 2], "mp3"),
+        ("B", 2, [2, 3], "flac"),
+        ("C", None, [1, 2], "flac"),
+    ]:
+        for number in numbers:
+            source = BytesIO((Path(__file__).parent / "fixtures" / f"silence.{ext}").read_bytes())
+            if ext == "mp3":
+                tags = ID3(source)
+                tags.add(TRCK(encoding=3, text=[f"{number:02d}/12"]))
+                tags.save(source)
+            else:
+                audio = FLAC(source)
+                audio["tracknumber"] = [f"{number:02d}"]
+                source.seek(0)
+                audio.save(source)
+            directory = library / album
+            if disc is not None:
+                directory /= f"CD{disc}"
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / f"{number:02d} - Song.{ext}").write_bytes(source.getvalue())
+    config_file = tmp_path / "sequence.yaml"
+    config = {
+        "library_root": str(library),
+        "required_tags": [],
+        "artwork": {"required": False},
+        "album_rules": {"consistent_album": False},
+        "cross_album_rules": {"enabled": False},
+    }
+
+    def scan_and_check(expected):
+        before = signatures(library)
+        config_file.write_text(yaml.safe_dump(config), encoding="utf-8")
+        run_scan(tmp_path, config_file)
+        found = report(tmp_path)["issues"]
+        assert len(found) == expected
+        assert all(i["rule"] == "track_number_gap" and i["severity"] == "error" for i in found)
+        with (tmp_path / "reports/issues.csv").open(encoding="utf-8-sig", newline="") as stream:
+            assert list(csv.DictReader(stream)) == found
+        document = (tmp_path / "reports/index.html").read_text()
+        assert document.count("<td>track_number_gap</td>") == expected
+        assert all(i["message"] in document for i in found)
+        catalog = json.loads((tmp_path / "reports/catalog.json").read_text())["albums"]
+        assert len(catalog) == 3
+        assert sum(a["number_of_issues"] or 0 for a in catalog) == expected
+        assert signatures(library) == before
+        return found
+
+    scan_and_check(0)
+    with patch.object(scanner, "read_metadata", side_effect=AssertionError("audio reread")):
+        config["album_rules"]["consecutive_track_numbers"] = True
+        found = scan_and_check(2)
+        assert "Disc 1: missing track numbers 02 (" in found[0]["message"]
+        assert "Disc 2: missing track numbers 01 (" in found[1]["message"]
+        (library / "A/rules.yaml").write_text(
+            "album_rules: {consecutive_track_numbers: false}\n", encoding="utf-8"
+        )
+        assert {i["album"] for i in scan_and_check(1)} == {str(library / "B")}
+        config["album_rules"]["consecutive_track_numbers"] = False
+        scan_and_check(0)
 
 
 def test_cross_album_aliases_cached_rules_and_all_reports(tmp_path):

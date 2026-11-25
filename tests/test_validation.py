@@ -131,3 +131,109 @@ def test_allowlist_diagnostic_is_unique_and_deterministic():
     issue = next(i for i in result if i["rule"] == "filename_allowed_chars")
     assert issue["message"].count("U+0021") == 1
     assert issue["message"].index("U+0021") < issue["message"].index("U+005F")
+
+
+def numbered_track(number, *, disc=None, folder_disc=None, album="A", name=None):
+    tags = {"tracknumber": number}
+    if disc is not None:
+        tags["discnumber"] = disc
+    return {
+        "album_dir": f"/music/{album}",
+        "path": f"/music/{album}/CD{folder_disc or 1}/{name or number} - Song.flac",
+        "metadata": {"tags": tags},
+        "disc_from_path": folder_disc,
+    }
+
+
+SEQUENCE_CONFIG = {
+    "filename": {"allowed_chars": ""},
+    "album_rules": {"consecutive_track_numbers": True},
+}
+
+
+@pytest.mark.parametrize("numbers", [["01"], ["03", "01", "02"], ["1/12", "02/12", "3/12"]])
+def test_consecutive_track_numbers_accepts_sorted_and_unsorted_sequences(numbers):
+    assert validate([numbered_track(n) for n in numbers], SEQUENCE_CONFIG) == []
+
+
+@pytest.mark.parametrize(
+    ("numbers", "missing"),
+    [
+        (["01", "02", "04"], "03"),
+        (["02", "03"], "01"),
+        (["04", "01", "07"], "02-03, 05-06"),
+        (["01", "1000000000000"], "02-999999999999"),
+    ],
+)
+def test_consecutive_track_numbers_reports_compact_missing_ranges(numbers, missing):
+    rows = [numbered_track(n) for n in numbers]
+    issues = validate(rows, SEQUENCE_CONFIG)
+    assert len(issues) == 1
+    found = issues[0]
+    assert found["rule"] == "track_number_gap"
+    assert found["severity"] == "error"
+    assert found["album"] == "/music/A"
+    assert f"Disc 1: missing track numbers {missing} (" in found["message"]
+    assert validate(list(reversed(rows)), SEQUENCE_CONFIG) == issues
+
+
+def test_consecutive_track_numbers_is_opt_in_and_can_be_disabled():
+    rows = [numbered_track("02")]
+    for album_rules in ({}, {"consecutive_track_numbers": False}):
+        assert validate(rows, {**SEQUENCE_CONFIG, "album_rules": album_rules}) == []
+
+
+def test_consecutive_track_numbers_checks_each_disc_and_album_independently():
+    rows = [
+        numbered_track("01", folder_disc=1),
+        numbered_track("02", folder_disc=1),
+        numbered_track("01", folder_disc=2),
+        numbered_track("03", folder_disc=2),
+        numbered_track("01", album="B"),
+        numbered_track("02", album="B"),
+    ]
+    issues = validate(rows, SEQUENCE_CONFIG)
+    assert len(issues) == 1
+    assert issues[0]["album"] == "/music/A"
+    assert "Disc 2: missing track numbers 02 (" in issues[0]["message"]
+
+
+def test_consecutive_track_numbers_uses_disc_tags_before_folder_numbers():
+    rows = [
+        numbered_track("01", disc="1/2", folder_disc=1),
+        numbered_track("01", disc="2/2", folder_disc=1),
+        numbered_track("02", disc="2/2", folder_disc=1),
+    ]
+    config = {
+        **SEQUENCE_CONFIG,
+        "album_rules": {"consecutive_track_numbers": True, "disc_number_mismatch": False},
+    }
+    assert validate(rows, config) == []
+
+
+@pytest.mark.parametrize("number", [None, "", " ", "bad", "0", "-1"])
+def test_consecutive_track_numbers_reports_unusable_numbers(number):
+    row = numbered_track(number)
+    if number is None:
+        del row["metadata"]["tags"]["tracknumber"]
+    issues = validate([row], SEQUENCE_CONFIG)
+    assert len(issues) == 1
+    assert issues[0]["rule"] == "invalid_tracknumber"
+    assert issues[0]["severity"] == "error"
+
+
+def test_consecutive_track_numbers_keeps_duplicate_and_read_errors_separate():
+    rows = [numbered_track("01", name="first"), numbered_track("01", name="copy")]
+    unreadable = numbered_track("02")
+    unreadable["error"] = "Cannot read tags"
+    rows.append(unreadable)
+    rows.append(numbered_track("03"))
+    config = {
+        **SEQUENCE_CONFIG,
+        "album_rules": {"consecutive_track_numbers": True, "unique_disc_track": True},
+    }
+    issues = validate(rows, config)
+    assert {i["rule"] for i in issues} == {"duplicate_track", "read_error", "track_number_gap"}
+    assert "missing track numbers 02 (" in next(
+        i["message"] for i in issues if i["rule"] == "track_number_gap"
+    )

@@ -86,11 +86,52 @@ custom_rules:
       operator: regex
       pattern: '(?is).*(?:instr|wywiad|zapowiedź).*'
     severity: warning
+  - id: comment_forbidden_chars
+    field: comment
+    template:
+      operator: regex
+      pattern: '[^\[\]<>]*'
+    severity: warning
+  - id: composer_no_comma
+    field: composer
+    template:
+      operator: regex
+      pattern: '[^,]*'
+    severity: warning
+  - id: lyricist_no_comma
+    field: lyricist
+    template:
+      operator: regex
+      pattern: '[^,]*'
+    severity: warning
+  - id: artist_no_comma
+    field: artist
+    template:
+      operator: regex
+      pattern: '[^,]*'
+    severity: warning
+  - id: albumartist_no_comma
+    field: albumartist
+    template:
+      operator: regex
+      pattern: '[^,]*'
+    severity: warning
+  - id: various_artists_requires_compilation
+    when:
+      field: albumartist
+      contains: 'Various Artists'
+    field: compilation
+    template:
+      operator: equals
+      pattern: '1'
+    severity: warning
 
 album_rules:
   consistent_album: true
   consistent_albumartist: true
   unique_disc_track: true
+  # Require 01..highest track number on each disc; gaps are errors.
+  consecutive_track_numbers: true
   disc_number_mismatch: true
   consistent_artwork: true
 

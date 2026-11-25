@@ -52,6 +52,7 @@ DEFAULTS = {
         "consistent_album": True,
         "consistent_albumartist": False,
         "unique_disc_track": True,
+        "consecutive_track_numbers": False,
         "consistent_artwork": False,
         "disc_number_mismatch": True,
     },

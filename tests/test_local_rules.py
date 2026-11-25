@@ -66,6 +66,15 @@ def test_patch_merging_order_replacement_and_parent_isolation():
     assert restored["required_tags"][-1] == "comment"
 
 
+def test_consecutive_track_numbers_can_be_enabled_and_disabled_locally():
+    parent = base_config()
+    enabled = apply_patch(parent, {"album_rules": {"consecutive_track_numbers": True}})
+    assert enabled["album_rules"]["consecutive_track_numbers"] is True
+    assert parent["album_rules"]["consecutive_track_numbers"] is False
+    disabled = apply_patch(enabled, {"album_rules": {"consecutive_track_numbers": False}})
+    assert disabled["album_rules"]["consecutive_track_numbers"] is False
+
+
 @pytest.mark.parametrize(
     "value",
     [

@@ -29,6 +29,11 @@
 
 ## P1 — quality features
 
+- Completed: optional album-scoped consecutive track numbering from 1 per disc,
+  compact missing-range errors, unusable-number diagnostics, local overrides and
+  cached MP3/FLAC revalidation across reports. Declared track/disc totals and
+  missing final tracks or whole discs remain future work.
+
 - Completed: folder-specific filename regex overrides, including disabling the
   pattern check, with inherited/disc-folder settings and cached revalidation.
 

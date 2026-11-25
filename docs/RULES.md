@@ -34,13 +34,15 @@ guessing a disc number. Grouping changes apply to cached tracks without audio re
 - `album_rules.consistent_album`: require one nonempty album tag value across album's tracks.
 - `album_rules.consistent_albumartist`: optional same check for albumartist.
 - `album_rules.unique_disc_track`: repeats of the same `(discnumber, tracknumber)` are flagged. Track numbers can be `1` or `1/10`.
+- `album_rules.consecutive_track_numbers`: optional continuity check from 1 through each disc's highest observed track number. Default `false`; enabled in the shipped YAML. Gaps emit `track_number_gap` errors, and unusable track numbers emit `invalid_tracknumber` errors. See details below.
 - `album_rules.consistent_artwork`: optional check for multiple distinct embedded image hashes across album. This baseline does not require images to be identical in all contexts.
 - `album_rules.disc_number_mismatch`: enabled by default; report disagreement between a parsed disc tag and the nearest disc folder. The tag still controls duplicate detection. Set false to disable this diagnostic.
 
 Required-tag and artwork presence checks are enabled by default even if omitted
 from YAML. Disable explicitly with `required_tags: []` and
 `artwork: {required: false}`. Default album checks are consistent album,
-unique disc/track and disc mismatch; albumartist/artwork consistency are opt-in.
+unique disc/track and disc mismatch; albumartist/artwork consistency and consecutive
+track numbering are opt-in when omitted from YAML.
 `filename.regex` defaults to `'^\d{2} - .+$'`; set null to disable. Custom rules
 default to an empty list; each requires a unique identifier, field and
 `template`, with severity `info`, `warning` (default)
@@ -60,6 +62,47 @@ filename:
 Allow all filename characters with `filename: {allowed_chars: ''}`. Omission of
 the key enables the default allowlist. YAML-only changes to this setting and the
 disc-folder pattern take effect on the next scan without rereading audio.
+
+## Consecutive track numbering
+
+```yaml
+album_rules:
+  consecutive_track_numbers: true
+```
+
+For each directory album, compare the distinct positive track numbers separately
+on each disc. Numbers come from normalized MP3 `TRCK` / FLAC `TRACKNUMBER`, not
+filenames. As with duplicate detection, parse the integer before an optional `/`
+suffix: `1`, `01`, `1/12` all supply 1. Leading zeros are optional. Disc identity
+uses the parsed `discnumber` tag, then the inferred disc-folder number, then 1;
+tag/folder conflicts retain the separate `disc_number_mismatch` diagnostic.
+
+The expected sequence is 1 through the highest observed positive number on that
+disc. `01, 02, 04` emits one `track_number_gap` error naming `03`; `02, 03` names
+`01`. One issue per affected disc lists all missing numbers as compact ranges,
+e.g. `02-04, 07`, without allocating every number in a potentially huge gap.
+The diagnostic includes the disc and expected final number; its reference file
+is the lexicographically first readable file with a positive track number on
+that disc. Duplicates do not fill gaps and remain independently controlled by
+`unique_disc_track`. Input order does not affect the continuity result.
+
+Missing/blank, unparseable and nonpositive `tracknumber` values emit per-file
+`invalid_tracknumber` errors. Other valid numbers are still checked. Files with
+metadata read errors retain `read_error` and are excluded from sequence checking;
+a gap can therefore indicate missing files or unusable metadata.
+
+This check does not interpret the suffix total, FLAC `TRACKTOTAL`/`TOTALTRACKS`,
+or disc totals. It cannot detect missing tracks after the highest observed number,
+or a whole missing disc. It is a numbering check rather than proof of a complete
+release. An empty album/disc has no observed sequence to validate.
+
+The option requires a YAML boolean and defaults to `false`; the shipped
+`config/rules.yaml` explicitly enables it. Folder-specific `album_rules` can
+override it at the canonical album directory or an ancestor, never inside a
+collapsed disc folder. All discs are checked together using that album's
+settings. YAML changes revalidate cached metadata without audio reads, parser
+version changes or database migration. HTML/CSV/JSON share the resulting error
+issues, which also contribute to the album catalog's issue counts.
 
 ## Directory exclusions
 
@@ -550,7 +593,7 @@ all modes use the same database lock and completed-discovery pruning.
 
 - Richer Boolean conditions (OR/negation) and numeric comparisons
 - Filename and parent folder template rules with sanitization/Unicode normalization
-- Track title formatting (regex, case, punctuation), disc numbering consistency, numeric track range and gaps, total-tracks sanity, calendar date validity and year/date consistency
+- Track title formatting (regex, case, punctuation), disc numbering consistency, total-tracks sanity, calendar date validity and year/date consistency
 - Album-level reports of cover resolution, art hash conflicts, and tag value distributions
 - Multi-value tag policy, comment selection, custom user fields and richer cross-tag expressions
 

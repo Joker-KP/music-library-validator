@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add `album_rules.consecutive_track_numbers` to detect numbering gaps from 1
+  through each disc's highest observed track number. Emit `track_number_gap`
+  errors with compact missing ranges and `invalid_tracknumber` errors for unusable
+  numbers; keep duplicate and read-error checks independent. Support canonical
+  album local overrides and cached MP3/FLAC revalidation without audio writes,
+  schema changes or full scans. The shipped YAML enables the rule; omission
+  defaults to `false` to preserve existing configurations. Declared totals,
+  missing final tracks and entirely missing discs are not checked.
+
 - Add global `exclude_directory_patterns`: regex searches against full absolute
   directory paths prune matching subtrees from counting, metadata/audio analysis,
   local-rule discovery and catalog sizes. Completed scans prune excluded tracks

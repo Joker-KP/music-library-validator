@@ -270,6 +270,16 @@ but dedicated audio modes continue skipping track and album metadata rules.
 
 Missing-tag, image presence/dimensions, filename regex and template rules run per track. Album consistency and duplicate disc/track run per album. Issues include album, path, rule ID, severity and text. Configured `album_rules` flags enable/disable checks. All rules are read-only.
 
+The optional `consecutive_track_numbers` album check groups positive normalized
+track numbers by the same disc identity as duplicate detection (tag, then folder,
+then disc 1). It sorts distinct numbers and records missing intervals from 1
+through the highest observed number, without expanding large ranges. Each affected
+disc emits one `track_number_gap` error with a deterministic reference path;
+unusable track numbers emit per-file `invalid_tracknumber` errors. Metadata read
+failures remain separate. Suffix totals and whole missing discs are not checked.
+The rule consumes cached metadata and inherits album-scoped local settings;
+neither normalization, album grouping, schema nor parser version changes.
+
 The independent `filename.allowed_chars` rule checks the stem against a literal
 allowlist with ASCII same-case letter/digit ranges. Punctuation is literal;
 configuration is never used as an arbitrary regular expression. Empty/null
